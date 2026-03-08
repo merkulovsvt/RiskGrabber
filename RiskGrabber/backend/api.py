@@ -949,7 +949,7 @@ def analytics_bank_scores(
     date_to: Optional[str] = Query(None, description="Конец периода (YYYY-MM-DD)"),
     db: Session = Depends(get_db_sync),
 ) -> List[schemas.BankScoreItem]:
-    """Рейтинг банков по индексу рисковости: средняя критичность отзывов (1–5) за период по отзывам с рисками."""
+    """Рейтинг банков по агрегированному показателю рисков: средняя критичность отзывов (1–5) за период по отзывам с рисками."""
     review_date = func.coalesce(models.Review.published_at, models.Review.scraped_at)
     reviews_date_min = db.query(func.min(review_date)).scalar()
     reviews_date_max = db.query(func.max(review_date)).scalar()

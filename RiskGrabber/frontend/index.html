@@ -1539,7 +1539,7 @@
       });
       if (currentBankId && !bankFilter.value) bankFilter.value = currentBankId;
 
-      // Рейтинг по рисковости и аналитика
+      // Рейтинг по агрегированному показателю рисков и аналитика
       renderBankScores(Array.isArray(data.bank_scores) ? data.bank_scores : []);
       const riskTrendsBankFilter = document.getElementById('riskTrendsBankFilter');
       if (riskTrendsBankFilter) {
