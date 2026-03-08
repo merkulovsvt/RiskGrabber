@@ -1,0 +1,44 @@
+[project]
+name = "diploma"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = "==3.13.12"
+dependencies = [
+    "beautifulsoup4",
+    "fastapi",
+    "hdbscan",
+    "langchain",
+    "langchain-core",
+    "langchain-openai",
+    "langgraph",
+    "numpy",
+    "openai",
+    "pydantic",
+    "pydantic-settings",
+    "qdrant-client",
+    "requests",
+    "scikit-learn",
+    "sentence-transformers",
+    "asyncpg",
+    "psycopg2-binary",
+    "sqlalchemy",
+    "umap-learn",
+    "uvicorn",
+    "datasets",
+    "torch",
+    "torchvision",
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu130", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+torchvision = [
+    { index = "pytorch-cu130", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]

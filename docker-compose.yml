@@ -1,0 +1,99 @@
+services:
+  # risk-grabber:
+  #   build:
+  #     context: .
+  #     dockerfile: RiskGrabber/Dockerfile
+  #   container_name: risk-grabber
+  #   environment:
+  #     - RISK_GRABBER_DB_URL=postgresql+psycopg2://risk_grabber:risk_grabber@postgres:5432/risk_grabber
+  #     - QDRANT_HOST=qdrant
+  #     - QDRANT_PORT=6333
+  #     - QDRANT_COLLECTION=bank_reviews
+
+  #     - OPENAI_BASE_URL=http://host.docker.internal:8001/v1
+  #     - LLM_MODEL=Qwen3.5-35B-A3B
+  #   ports:
+  #     - "8000:8000"
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #     qdrant:
+  #       condition: service_healthy
+  #     # vllm:
+  #     #   condition: service_healthy
+  #   restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres
+    environment:
+      - POSTGRES_USER=risk_grabber
+      - POSTGRES_PASSWORD=risk_grabber
+      - POSTGRES_DB=risk_grabber
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U risk_grabber -d risk_grabber"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - ./data/qdrant:/qdrant/storage
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:6333/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+    # vllm:
+    #   image: vllm/vllm-openai:latest
+    #   container_name: vllm
+    #   ports:
+    #     - "8001:8000"
+    #   restart: unless-stopped
+    #   runtime: nvidia
+    #   volumes:
+    #     - ./data/vllm_models:/root/.cache/huggingface
+    #   deploy:
+    #     resources:
+    #       reservations:
+    #         devices:
+    #           - driver: nvidia
+    #             count: 1
+    #             capabilities: ["gpu"]
+  #   command: [
+  #     "--model", "cyankiwi/Qwen3-4B-Instruct-2507-AWQ-4bit",
+  #     # "--model", "cyankiwi/Qwen3.5-4B-AWQ-4bit",
+  #     "--served-model-name", "Qwen3-4B",
+  #     "--max-model-len", "4096",
+  #     # "--reasoning-parser", "qwen3",
+  #     # "--tool-call-parser", "qwen3_coder",
+  #     "--tool-call-parser", "hermes",
+  #     # "--language-model-only",
+  #     "--gpu-memory-utilization", "0.80",
+  #     "--host", "0.0.0.0",
+  #     "--port", "8000",
+  #     "--enable-prefix-caching",  
+  #     "--download-dir", "/root/.cache/huggingface/hub"
+  #   ]
+  #   environment:
+  #     - VLLM_USE_V1=0  # 👈 Использовать стабильный V0 движок
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 5
+  #     start_period: 300s  # Увеличено: первое скачивание может занять время

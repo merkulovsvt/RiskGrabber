@@ -1,0 +1,2078 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Мониторинг рисков банков</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
+      background-size: 200% 200%;
+      animation: gradientShift 15s ease infinite;
+      min-height: 100vh;
+      padding: 20px;
+      color: #333;
+    }
+    @keyframes gradientShift {
+      0% { background-position: 0% 50%; }
+      50% { background-position: 100% 50%; }
+      100% { background-position: 0% 50%; }
+    }
+    .container { max-width: 1400px; margin: 0 auto; }
+    header {
+      background: rgba(255, 255, 255, 0.98);
+      backdrop-filter: blur(20px);
+      border-radius: 20px;
+      padding: 32px 40px;
+      margin-bottom: 24px;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(255, 255, 255, 0.5);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      animation: slideDown 0.6s ease;
+    }
+    @keyframes slideDown {
+      from { transform: translateY(-20px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+    h1 {
+      font-size: 32px;
+      font-weight: 700;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 8px;
+    }
+    .subtitle {
+      color: #666;
+      font-size: 16px;
+    }
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 20px;
+      margin-bottom: 24px;
+    }
+    .stat-card {
+      background: rgba(255, 255, 255, 0.98);
+      backdrop-filter: blur(20px);
+      border-radius: 20px;
+      padding: 28px;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.12), 0 0 0 1px rgba(255, 255, 255, 0.5);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      position: relative;
+      overflow: hidden;
+    }
+    .stat-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: -100%;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+      transition: left 0.5s ease;
+    }
+    .stat-card:hover::before {
+      left: 100%;
+    }
+    .stat-card:hover {
+      transform: translateY(-8px) scale(1.02);
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(102, 126, 234, 0.3);
+    }
+    .stat-value {
+      font-size: 36px;
+      font-weight: 700;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 8px;
+    }
+    .stat-label {
+      color: #666;
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .controls-panel {
+      background: rgba(255, 255, 255, 0.98);
+      backdrop-filter: blur(20px);
+      border-radius: 20px;
+      padding: 28px;
+      margin-bottom: 24px;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.12), 0 0 0 1px rgba(255, 255, 255, 0.5);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      min-height: 100px;
+    }
+    .status-line {
+      min-height: 24px;
+      padding: 12px 20px;
+      margin-bottom: 24px;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.6);
+      font-size: 14px;
+      color: #444;
+      transition: background 0.2s ease;
+    }
+    .status-line.status-progress {
+      background: rgba(102, 126, 234, 0.15);
+      border-left: 4px solid #667eea;
+      padding-left: 16px;
+    }
+    .status-line.status-progress::before {
+      content: '';
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      margin-right: 10px;
+      vertical-align: middle;
+      border: 2px solid #667eea;
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    .controls-row {
+      display: grid;
+      grid-template-columns: 1fr 340px;
+      gap: 24px;
+      margin-bottom: 24px;
+      align-items: stretch;
+      min-height: 320px;
+    }
+    .controls-row .controls-panel,
+    .controls-row .sentiment-card {
+      min-width: 0;
+      min-height: 320px;
+      display: flex;
+      flex-direction: column;
+    }
+    .controls-row .sentiment-card h3 { margin-bottom: 12px; flex-shrink: 0; }
+    .controls-row .sentiment-card .chart-wrap {
+      flex: 1;
+      min-height: 200px;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .controls-row .sentiment-card .chart-wrap canvas {
+      max-height: 100%;
+      max-width: 100%;
+    }
+    @media (max-width: 768px) {
+      .controls-row {
+        grid-template-columns: 1fr;
+      }
+      .controls-row .sentiment-card .chart-wrap { min-height: 240px; }
+    }
+    .chart-container {
+      position: relative;
+      min-height: 260px;
+      width: 100%;
+    }
+    .chart-container canvas {
+      display: block;
+    }
+    .charts-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+      margin-bottom: 24px;
+    }
+    .charts-stack .card {
+      width: 100%;
+    }
+    .charts-stack .chart-container {
+      position: relative;
+      width: 100%;
+      height: 320px;
+      min-height: 280px;
+      overflow: hidden;
+    }
+    .charts-stack .chart-container canvas {
+      max-width: 100%;
+      max-height: 100%;
+    }
+    .negative-breakdown {
+      display: flex;
+      gap: 24px;
+      margin-bottom: 16px;
+    }
+    .negative-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .negative-value {
+      font-size: 28px;
+      font-weight: 700;
+      color: #333;
+    }
+    .negative-label {
+      font-size: 12px;
+      color: #666;
+    }
+    .control-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+    .control-group:last-child { margin-bottom: 0; }
+    .control-group label {
+      font-weight: 600;
+      color: #333;
+      font-size: 14px;
+    }
+    input[type="number"], input[type="date"] {
+      padding: 10px 14px;
+      border: 2px solid #e0e0e0;
+      border-radius: 8px;
+      font-size: 14px;
+      transition: border-color 0.3s ease;
+      background: white;
+    }
+    input[type="number"]:focus, input[type="date"]:focus {
+      outline: none;
+      border-color: #667eea;
+    }
+    .btn {
+      padding: 14px 28px;
+      border: none;
+      border-radius: 12px;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+      position: relative;
+      overflow: hidden;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .btn::before {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 0;
+      height: 0;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.3);
+      transform: translate(-50%, -50%);
+      transition: width 0.6s, height 0.6s;
+    }
+    .btn:hover::before {
+      width: 300px;
+      height: 300px;
+    }
+    .btn:hover {
+      transform: translateY(-3px) scale(1.05);
+      box-shadow: 0 10px 30px rgba(102, 126, 234, 0.6);
+    }
+    .btn:active {
+      transform: translateY(-1px) scale(1.02);
+    }
+    .btn span {
+      position: relative;
+      z-index: 1;
+    }
+    .btn-secondary {
+      background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+      box-shadow: 0 4px 15px rgba(245, 87, 108, 0.4);
+    }
+    .btn-secondary:hover {
+      box-shadow: 0 6px 20px rgba(245, 87, 108, 0.6);
+    }
+    .checkbox-group {
+      display: flex;
+      gap: 16px;
+      align-items: center;
+    }
+    .checkbox-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .checkbox-item input[type="checkbox"] {
+      width: 20px;
+      height: 20px;
+      cursor: pointer;
+      accent-color: #667eea;
+    }
+    .checkbox-item label {
+      cursor: pointer;
+      user-select: none;
+    }
+    #status {
+      background: rgba(255, 255, 255, 0.95);
+      backdrop-filter: blur(10px);
+      border-radius: 12px;
+      padding: 12px 16px;
+      margin-bottom: 24px;
+      color: #555;
+      font-size: 14px;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+    }
+    .charts {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+      gap: 24px;
+      margin-bottom: 24px;
+    }
+    .card {
+      background: rgba(255, 255, 255, 0.98);
+      backdrop-filter: blur(20px);
+      border-radius: 20px;
+      padding: 28px;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.12), 0 0 0 1px rgba(255, 255, 255, 0.5);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+    .card:hover {
+      transform: translateY(-4px) scale(1.01);
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(102, 126, 234, 0.2);
+    }
+    .card h3 {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 16px;
+      color: #333;
+    }
+    .card.full-width { grid-column: 1 / -1; }
+    canvas { max-width: 100%; }
+    #risksList {
+      list-style: none;
+      padding: 0;
+    }
+    #risksList li {
+      padding: 12px;
+      margin-bottom: 8px;
+      background: #f8f9fa;
+      border-radius: 8px;
+      border-left: 4px solid #667eea;
+      transition: background 0.3s ease;
+    }
+    #risksList li:hover { background: #e9ecef; }
+    #risksList li.clickable { cursor: pointer; }
+    #risksList li.clickable:active { background: #dee2e6; }
+    #bankScoresRanking table,
+    #riskMatrixWrap table { width: 100%; border-collapse: collapse; border: 1px solid #e0e0e0; }
+    #bankScoresRanking table th,
+    #bankScoresRanking table td,
+    #riskMatrixWrap table th,
+    #riskMatrixWrap table td { padding: 8px 12px; border: 1px solid #eee; text-align: left; }
+    #bankScoresRanking table th,
+    #riskMatrixWrap table th { background: rgba(102, 126, 234, 0.1); font-weight: 600; }
+
+    #risksList li strong {
+      display: block;
+      color: #333;
+      margin-bottom: 4px;
+    }
+    #risksList li span {
+      font-size: 12px;
+      color: #666;
+    }
+    @media (max-width: 768px) {
+      .charts { grid-template-columns: 1fr; }
+      .control-group { flex-direction: column; align-items: stretch; }
+    }
+    .modal {
+      display: none;
+      position: fixed;
+      z-index: 1000;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.5);
+      backdrop-filter: blur(5px);
+      animation: fadeIn 0.3s ease;
+    }
+    .modal.active {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    .modal-content {
+      background: white;
+      border-radius: 16px;
+      padding: 32px;
+      max-width: 700px;
+      width: 90%;
+      max-height: 90vh;
+      overflow-y: auto;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      animation: slideUp 0.3s ease;
+    }
+    @keyframes slideUp {
+      from { transform: translateY(50px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 2px solid #e0e0e0;
+    }
+    .modal-title {
+      font-size: 24px;
+      font-weight: 700;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .close-btn {
+      background: none;
+      border: none;
+      font-size: 28px;
+      cursor: pointer;
+      color: #666;
+      transition: color 0.3s ease;
+      padding: 0;
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .close-btn:hover { color: #333; }
+    .review-info {
+      display: grid;
+      gap: 16px;
+    }
+    .info-row {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+    .info-label {
+      font-weight: 600;
+      color: #666;
+      min-width: 120px;
+    }
+    .info-value {
+      color: #333;
+    }
+    .badge {
+      display: inline-block;
+      padding: 4px 12px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .badge-positive { background: #e8f5e9; color: #2e7d32; }
+    .badge-negative { background: #ffebee; color: #c62828; }
+    .review-text {
+      background: #f8f9fa;
+      padding: 16px;
+      border-radius: 8px;
+      border-left: 4px solid #667eea;
+      margin-top: 8px;
+      line-height: 1.6;
+      color: #333;
+    }
+    .clusters-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .cluster-badge {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 6px 12px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .slider-container {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 16px;
+      background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
+      border-radius: 12px;
+      border: 2px solid rgba(102, 126, 234, 0.2);
+    }
+    .slider-wrapper {
+      flex: 1;
+      position: relative;
+    }
+    input[type="range"] {
+      width: 100%;
+      height: 8px;
+      border-radius: 4px;
+      background: linear-gradient(90deg, #e0e0e0 0%, #667eea 100%);
+      outline: none;
+      -webkit-appearance: none;
+      cursor: pointer;
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      cursor: pointer;
+      box-shadow: 0 2px 8px rgba(102, 126, 234, 0.4);
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    input[type="range"]::-webkit-slider-thumb:hover {
+      transform: scale(1.2);
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.6);
+    }
+    input[type="range"]::-moz-range-thumb {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      cursor: pointer;
+      border: none;
+      box-shadow: 0 2px 8px rgba(102, 126, 234, 0.4);
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    input[type="range"]::-moz-range-thumb:hover {
+      transform: scale(1.2);
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.6);
+    }
+    .slider-value {
+      min-width: 80px;
+      text-align: center;
+      font-weight: 700;
+      font-size: 16px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      padding: 4px 12px;
+      border-radius: 8px;
+      background-color: rgba(102, 126, 234, 0.1);
+    }
+    .btn-embedding {
+      background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+      box-shadow: 0 4px 15px rgba(17, 153, 142, 0.4);
+    }
+    .btn-embedding:hover {
+      box-shadow: 0 6px 20px rgba(17, 153, 142, 0.6);
+    }
+    .btn-pipeline {
+      background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+      box-shadow: 0 4px 15px rgba(250, 112, 154, 0.4);
+    }
+    .btn-pipeline:hover {
+      box-shadow: 0 6px 20px rgba(250, 112, 154, 0.6);
+    }
+    .control-section {
+      background: rgba(255, 255, 255, 0.6);
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 12px;
+      border: 1px solid rgba(102, 126, 234, 0.2);
+    }
+    .control-section-title {
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #667eea;
+      margin-bottom: 12px;
+    }
+    .btn-group {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .date-range-plaque {
+      background: linear-gradient(135deg, rgba(102, 126, 234, 0.08) 0%, rgba(118, 75, 162, 0.08) 100%);
+      border-radius: 12px;
+      padding: 12px 18px;
+      margin-bottom: 20px;
+      font-size: 14px;
+      font-weight: 600;
+      color: #555;
+      border: 1px solid rgba(102, 126, 234, 0.25);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+    .date-range-plaque .date-range-from,
+    .date-range-plaque .date-range-to { color: #667eea; }
+    .period-filter-plaque {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px 16px;
+      flex-wrap: wrap;
+      background: linear-gradient(145deg, rgba(102, 126, 234, 0.12) 0%, rgba(118, 75, 162, 0.08) 100%);
+      border: 1px solid rgba(102, 126, 234, 0.3);
+      border-radius: 14px;
+      padding: 14px 20px;
+      box-shadow: 0 2px 12px rgba(102, 126, 234, 0.08);
+    }
+    .period-filter-plaque .period-label {
+      font-size: 13px;
+      font-weight: 600;
+      color: #555;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .period-filter-plaque .period-label::before {
+      content: '📅';
+      font-size: 1.1em;
+    }
+    .period-filter-plaque input.period-date {
+      width: 108px;
+      padding: 10px 12px;
+      font-size: 14px;
+      border: 2px solid rgba(102, 126, 234, 0.25);
+      border-radius: 10px;
+      background: #fff;
+      color: #333;
+      text-align: center;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .period-filter-plaque input.period-date:focus {
+      outline: none;
+      border-color: #667eea;
+      box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.15);
+    }
+    .period-filter-plaque input.period-date::placeholder {
+      color: #aaa;
+    }
+    .period-filter-plaque .period-sep {
+      color: #667eea;
+      font-weight: 700;
+      font-size: 16px;
+      user-select: none;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🔍 Система раннего обнаружения рисков</h1>
+      <p class="subtitle">Потоковый анализ отзывов клиентов banki.ru с использованием NLP и машинного обучения</p>
+    </header>
+
+    <!-- 1. Сводка по отзывам -->
+    <div class="card" style="margin-bottom: 24px;">
+      <h3 style="margin-bottom: 16px;">📥 Отзывы</h3>
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-value" id="totalReviews">-</div>
+          <div class="stat-label">Всего отзывов скачано</div>
+          <div id="dateRangePlaque" class="date-range-plaque" style="margin-top: 12px;">
+            📅 с <span id="dateRangeFrom" class="date-range-from">—</span> по <span id="dateRangeTo" class="date-range-to">—</span>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="totalBanks">-</div>
+          <div class="stat-label">Всего банков</div>
+        </div>
+      </div>
+      <div class="control-section" style="margin-top: 16px;">
+        <div class="control-section-title">Обработка сентиментом</div>
+        <div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));">
+          <div class="stat-card">
+            <div class="stat-value" id="reviewsWithSentiment">-</div>
+            <div class="stat-label">Обработано</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="reviewsWithoutSentiment">-</div>
+            <div class="stat-label">Не обработано</div>
+          </div>
+        </div>
+      </div>
+      <div class="control-section" style="margin-top: 16px;">
+        <div class="control-section-title">Негативные отзывы — присвоение риска</div>
+        <div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));">
+          <div class="stat-card">
+            <div class="stat-value" id="negativeWithRisk">-</div>
+            <div class="stat-label">С риском</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="negativeWithoutRisk">-</div>
+            <div class="stat-label">Без риска</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="controls-row">
+      <div class="controls-panel">
+        <div class="control-section">
+          <div class="control-section-title">🔄 Сбор данных</div>
+          <div class="control-group" style="flex-wrap: wrap; gap: 8px; align-items: center;">
+            <label>📥 Количество отзывов:</label>
+            <input type="number" id="datasetCountInput" value="50" min="1" style="width: 80px;" title="Количество отзывов для загрузки (без ограничения)" />
+            <button id="loadDatasetBtn" class="btn" style="background: #17a2b8; color: #fff;" title="Загрузить новые отзывы из датасета HuggingFace (от старых к новым)"><span>📂 Загрузить новые отзывы</span></button>
+          </div>
+          <p style="font-size: 12px; color: #666; margin-top: 6px;">Каждое нажатие загружает указанное количество ещё не загруженных отзывов из датасета Romjiik/Russian_bank_reviews (сортировка по дате: от старых к новым).</p>
+        </div>
+        <div class="control-section">
+          <div class="control-section-title">🤖 Обработка</div>
+          <div class="control-group" style="flex-wrap: wrap; gap: 12px; align-items: center;">
+            <label class="toggle-wrap" style="display: inline-flex; align-items: center; gap: 8px; cursor: pointer;">
+              <input type="checkbox" id="autoProcessToggle" style="width: 18px; height: 18px; cursor: pointer;" />
+              <span style="font-weight: 600;">Auto</span>
+            </label>
+            <button id="generateEmbeddingsBtn" class="btn btn-embedding"><span>🧠 Сгенерировать эмбеддинги</span></button>
+            <button id="generateRisksBtn" class="btn btn-secondary"><span>⚡ Сгенерировать риски</span></button>
+          </div>
+          <p style="font-size: 12px; color: #666; margin-top: 6px;">При включённом Auto новые необработанные отзывы автоматически проходят этап эмбеддингов, затем генерацию рисков. Кнопки при этом неактивны.</p>
+        </div>
+      </div>
+      <div class="card sentiment-card">
+        <h3>💭 Распределение сентимента</h3>
+        <div class="chart-wrap chart-container" style="min-height: 240px;">
+          <canvas id="sentimentChart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <div id="status" class="status-line"></div>
+
+    <div class="card" style="margin-bottom: 24px;">
+      <h3>⚠️ Актуальные риски</h3>
+      <p style="font-size: 12px; color: #666; margin: -8px 0 12px 0;">Список по описаниям рисков за период.</p>
+      <div class="control-section" style="margin-bottom: 16px;">
+        <div class="control-section-title">Фильтр</div>
+        <div class="control-group" style="flex-wrap: wrap; gap: 12px; align-items: center;">
+          <label>Банк:</label>
+          <select id="risksBankFilter" style="padding: 10px 14px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 14px; min-width: 200px;">
+            <option value="">Все банки</option>
+          </select>
+          <label style="margin-left: 8px;">Вид риска:</label>
+          <select id="risksTypeFilter" style="padding: 10px 14px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 14px; min-width: 200px;">
+            <option value="">Все виды</option>
+          </select>
+          <label style="margin-left: 8px;">Период:</label>
+          <input type="date" id="risksDateFrom" title="Начало периода" style="padding: 10px 14px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 14px;" />
+          <span style="color: #666; padding: 0 4px;">—</span>
+          <input type="date" id="risksDateTo" title="Конец периода" style="padding: 10px 14px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 14px;" />
+        </div>
+        <p style="font-size: 12px; color: #666; margin-top: 6px;">Период задаёт диапазон дат отзывов для всех графиков и для списка рисков на странице.</p>
+      </div>
+      <p id="risksUniqueCount" style="font-size: 14px; font-weight: 600; color: #333; margin-bottom: 10px;"></p>
+      <div style="max-height: 500px; overflow-y: auto;">
+        <ul id="risksList"></ul>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom: 24px;">
+      <h3>🗺️ Векторы отзывов (UMAP 2D)</h3>
+      <div class="checkbox-group" style="margin-bottom: 16px;">
+        <div class="checkbox-item">
+          <input type="checkbox" id="sentimentPositive" checked />
+          <label for="sentimentPositive" style="color: #4caf50;">✅ Позитивные</label>
+        </div>
+        <div class="checkbox-item">
+          <input type="checkbox" id="sentimentNegative" checked />
+          <label for="sentimentNegative" style="color: #f44336;">❌ Негативные</label>
+        </div>
+      </div>
+      <p id="vectorMapCounts" style="font-size: 14px; color: #555; margin: 0 0 12px 0;">Всего на карте: — (позитивных: —, негативных: —)</p>
+      <div id="vectorMapEmptyWrap" class="chart-container" style="height: 500px; position: relative;">
+        <div id="vectorMapEmptyMessage" style="display: none; position: absolute; inset: 0; flex-direction: column; gap: 12px; background: rgba(248,249,250,0.95); border-radius: 12px; padding: 24px; text-align: center; align-items: center; justify-content: center; flex-wrap: nowrap;">
+          <span style="font-size: 48px;">🗺️</span>
+          <p style="margin: 0; font-size: 16px; color: #555; max-width: 380px;">Нет данных для карты. Нажмите «🧠 Сгенерировать эмбеддинги». Убедитесь, что Qdrant запущен (docker-compose).</p>
+        </div>
+        <canvas id="vectorMap"></canvas>
+      </div>
+    </div>
+
+    <div class="charts-stack">
+      <div class="card">
+        <h3>📊 Количество отзывов по банкам</h3>
+        <div class="chart-container">
+          <canvas id="reviewsByBank"></canvas>
+        </div>
+      </div>
+      <div class="card">
+        <h3>⭐ Средний рейтинг по банкам</h3>
+        <div class="chart-container">
+          <canvas id="ratingByBank"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom: 24px;">
+      <h3>📈 Динамика количества отзывов</h3>
+      <p style="font-size: 12px; color: #666; margin: -8px 0 12px 0;">Позитивные и негативные отзывы, уникальные риски. Группировка по дням, неделям или месяцам.</p>
+      <div class="control-group" style="margin-bottom: 12px; flex-wrap: wrap; gap: 12px;">
+        <label for="reviewsOverTimeBankFilter">Банк:</label>
+        <select id="reviewsOverTimeBankFilter" style="padding: 10px 14px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 14px; min-width: 220px;">
+          <option value="">Все банки</option>
+        </select>
+        <label for="reviewsOverTimeGroupBy">Группировка:</label>
+        <select id="reviewsOverTimeGroupBy" style="padding: 10px 14px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 14px;">
+          <option value="day">По дням</option>
+          <option value="week">По неделям</option>
+          <option value="month" selected>По месяцам</option>
+        </select>
+      </div>
+      <div id="reviewsOverTimePlaques" style="display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 16px;">
+        <span class="period-filter-plaque" style="padding: 10px 16px;"><strong>Отзывов:</strong> <span id="rotTotalReviews">—</span></span>
+        <span class="period-filter-plaque" style="padding: 10px 16px;"><strong>Уникальных рисков:</strong> <span id="rotUniqueRisks">—</span></span>
+      </div>
+      <div class="chart-container">
+        <canvas id="reviewsOverTime"></canvas>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom: 24px;">
+      <h3>📈 Динамика количества рисков</h3>
+      <p style="font-size: 12px; color: #666; margin: -8px 0 12px 0;">Количество отзывов по видам рисков (операционный, процессный и т.д.). Группировка по дням, неделям или месяцам.</p>
+      <div class="control-group" style="margin-bottom: 12px; flex-wrap: wrap; gap: 12px;">
+        <label for="riskTrendsBankFilter">Банк:</label>
+        <select id="riskTrendsBankFilter" style="padding: 10px 14px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 14px; min-width: 220px;">
+          <option value="">Все банки</option>
+        </select>
+        <label for="riskTrendsGroupBy">Группировка:</label>
+        <select id="riskTrendsGroupBy" style="padding: 10px 14px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 14px;">
+          <option value="day">По дням</option>
+          <option value="week">По неделям</option>
+          <option value="month" selected>По месяцам</option>
+        </select>
+      </div>
+      <div class="chart-container" style="height: 380px; width: 100%;">
+        <canvas id="riskTrendsChart"></canvas>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom: 24px;">
+      <h3>🏆 Рейтинг банков</h3>
+      <p style="font-size: 12px; color: #666; margin-bottom: 10px;">Взвешенная сумма рисков по степени серьёзности за период, нормализованная по числу отзывов.</p>
+      <div id="bankScoresRanking" style="overflow-x: auto; min-height: 80px;">
+        <p style="color: #666;">Загрузите дашборд — рейтинг подставится из данных.</p>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom: 24px;">
+      <h3>⚠️ Серьёзность отзывов по банкаи</h3>
+      <p style="font-size: 12px; color: #666; margin-bottom: 10px;">Распределение отзывов по степени критичности (1–5) за период. Данные появляются после обработки рисков и оценки критичности.</p>
+      <div class="chart-container" style="height: 380px; width: 100%;">
+        <canvas id="reviewCriticalityChart"></canvas>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom: 24px;">
+      <h3>🗂️ Тепловая карта (банк × риск)</h3>
+      <p style="font-size: 12px; color: #666; margin-bottom: 10px;">Средняя серьёзность отзывов (1–5) по парам банк × вид риска за период.</p>
+      <div id="riskMatrixWrap" style="overflow-x: auto; min-height: 120px;">
+        <p style="color: #666;">Загрузка по кнопке или при обновлении дашборда.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Модальное окно для деталей отзыва -->
+  <div id="reviewModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title">📝 Детали отзыва</h2>
+        <button class="close-btn" onclick="closeReviewModal()">&times;</button>
+      </div>
+      <div id="reviewDetails" class="review-info">
+        <div style="text-align: center; padding: 20px;">
+          <div class="spinner" style="border: 4px solid #f3f3f3; border-top: 4px solid #667eea; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto;"></div>
+          <p style="margin-top: 12px; color: #666;">Загрузка...</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Модальное окно: риск (вид, описание, факторы) + отзывы -->
+  <div id="riskReviewsModal" class="modal">
+    <div class="modal-content" style="max-width: 640px;">
+      <div class="modal-header">
+        <h2 class="modal-title" id="riskReviewsModalTitle">📋 Риск</h2>
+        <button class="close-btn" onclick="closeRiskReviewsModal()">&times;</button>
+      </div>
+      <div id="riskDetailCard" style="display: none; margin-bottom: 16px; padding: 14px; background: #f0f4ff; border-radius: 10px; border-left: 4px solid #667eea;"></div>
+      <div id="riskReviewsList" class="review-info" style="max-height: 55vh; overflow-y: auto;">
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let reviewsByBankChart = null;
+    let ratingByBankChart = null;
+    let sentimentChart = null;
+    let reviewsOverTimeChart = null;
+    let riskTrendsChart = null;
+    let reviewCriticalityChart = null;
+    let vectorMapChart = null;
+
+    /** Парсит дату дд.мм.гггг или гггг-мм-дд, возвращает гггг-мм-дд для API или null. */
+    function parseDateToYMD(val) {
+      if (!val || typeof val !== 'string') return null;
+      const v = val.trim();
+      const m = v.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+      if (m) {
+        const d = parseInt(m[1], 10); const mon = parseInt(m[2], 10); const y = parseInt(m[3], 10);
+        if (y >= 1900 && y <= 2100 && mon >= 1 && mon <= 12 && d >= 1 && d <= 31) {
+          const month = String(mon).padStart(2, '0'); const day = String(d).padStart(2, '0');
+          return y + '-' + month + '-' + day;
+        }
+      }
+      if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+      return null;
+    }
+    /** Форматирует дату в дд.мм.гггг для отображения везде на сайте (плашка периода, графики, списки). */
+    function formatToDdMmYyyy(val) {
+      if (!val) return '';
+      if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}/.test(val)) {
+        const p = val.slice(0, 10).split('-');
+        return p[2] + '.' + p[1] + '.' + p[0];
+      }
+      const x = val instanceof Date ? val : new Date(val);
+      if (isNaN(x.getTime())) return '';
+      const d = String(x.getDate()).padStart(2, '0');
+      const m = String(x.getMonth() + 1).padStart(2, '0');
+      const y = x.getFullYear();
+      return d + '.' + m + '.' + y;
+    }
+    /** То же: дд.мм.гггг для графиков и списков. */
+    function formatDateDisplay(val) {
+      return formatToDdMmYyyy(val);
+    }
+    function buildAnalyticsParams() {
+      const params = new URLSearchParams();
+      let fromRaw = (document.getElementById('risksDateFrom') || {}).value || '';
+      let toRaw = (document.getElementById('risksDateTo') || {}).value || '';
+      let from = parseDateToYMD(fromRaw);
+      let to = parseDateToYMD(toRaw);
+      if (from && to && from > to) { const t = from; from = to; to = t; }
+      if (from) params.set('date_from', from);
+      if (to) params.set('date_to', to);
+      return params;
+    }
+
+    function setStatus(msg, isProgress) {
+      const el = document.getElementById('status');
+      el.innerText = msg || '';
+      el.className = 'status-line' + (isProgress && msg ? ' status-progress' : '');
+    }
+
+    function consumeStream(url, options) {
+      const onProgress = (options && options.onProgress) || (() => {});
+      return new Promise((resolve, reject) => {
+        const es = new EventSource(url);
+        es.onmessage = (e) => {
+          try {
+            const d = JSON.parse(e.data);
+            if (typeof onProgress === 'function') onProgress(d);
+            if (d.message) setStatus(d.message, !!d.done === false);
+            if (d.done) {
+              es.close();
+              resolve(d.result != null ? d.result : d);
+            }
+          } catch (err) {
+            es.close();
+            reject(err);
+          }
+        };
+        es.onerror = () => {
+          es.close();
+          reject(new Error('Поток прерван'));
+        };
+      });
+    }
+
+    function dateToYMD(d) {
+      if (!d) return '';
+      const x = d instanceof Date ? d : new Date(d);
+      return isNaN(x.getTime()) ? '' : x.toISOString().slice(0, 10);
+    }
+
+    function buildDashboardUrl() {
+      const params = new URLSearchParams();
+      let fromRaw = (document.getElementById('risksDateFrom') || {}).value || '';
+      let toRaw = (document.getElementById('risksDateTo') || {}).value || '';
+      let risksFrom = parseDateToYMD(fromRaw);
+      let risksTo = parseDateToYMD(toRaw);
+      if (risksFrom && risksTo && risksFrom > risksTo) {
+        const t = risksFrom; risksFrom = risksTo; risksTo = t;
+      }
+      if (risksFrom) params.set('date_from', risksFrom);
+      if (risksTo) params.set('date_to', risksTo);
+      const bankId = (document.getElementById('risksBankFilter') || {}).value || '';
+      if (bankId) params.set('bank_id', String(bankId).trim());
+      return `/dashboard/data?${params.toString()}`;
+    }
+
+    function setDefaultPeriodDates(dateMin, dateMax) {
+      const fromStr = (typeof dateMin === 'string' && dateMin.length >= 10) ? dateMin.slice(0, 10) : dateToYMD(dateMin);
+      const toStr = (typeof dateMax === 'string' && dateMax.length >= 10) ? dateMax.slice(0, 10) : dateToYMD(dateMax);
+      const risksFrom = document.getElementById('risksDateFrom');
+      const risksTo = document.getElementById('risksDateTo');
+      if (risksFrom && fromStr && !risksFrom.value) risksFrom.value = fromStr;
+      if (risksTo && toStr && !risksTo.value) risksTo.value = toStr;
+    }
+
+    /** Обновляет плашку периода отзывов по датам отзывов в БД (мин/макс дата отзыва: published_at / scraped_at). */
+    function updateDateRangePlaque(dateMin, dateMax) {
+      const fmt = (d) => formatToDdMmYyyy(d);
+      const elFrom = document.getElementById('dateRangeFrom');
+      const elTo = document.getElementById('dateRangeTo');
+      const parse = (v) => {
+        if (v == null || v === '') return null;
+        if (typeof v === 'string') return new Date(v);
+        if (v instanceof Date) return v;
+        return null;
+      };
+      const from = parse(dateMin);
+      const to = parse(dateMax);
+      elFrom.textContent = from ? fmt(from) : '—';
+      elTo.textContent = to ? fmt(to) : '—';
+    }
+
+    /** Храним последний загруженный список рисков для фильтра по виду. */
+    let lastDashboardRisks = [];
+
+    /** Заполняет селект «Вид риска» уникальными видами из списка и отрисовывает список с учётом выбранного вида. */
+    function updateRisksListWithTypeFilter(risks) {
+      lastDashboardRisks = Array.isArray(risks) ? risks : [];
+      const typeFilterEl = document.getElementById('risksTypeFilter');
+      if (typeFilterEl) {
+        const currentVal = typeFilterEl.value;
+        const types = [];
+        const seen = {};
+        lastDashboardRisks.forEach(function(r) {
+          const t = (r.risk_type || '').trim();
+          if (t && !seen[t]) { seen[t] = true; types.push(t); }
+        });
+        types.sort();
+        typeFilterEl.innerHTML = '<option value="">Все виды</option>';
+        types.forEach(function(t) {
+          const opt = document.createElement('option');
+          opt.value = t;
+          opt.textContent = t.length > 50 ? t.slice(0, 47) + '…' : t;
+          if (t === currentVal) opt.selected = true;
+          typeFilterEl.appendChild(opt);
+        });
+        const selected = typeFilterEl.value;
+        const filtered = !selected ? lastDashboardRisks : lastDashboardRisks.filter(function(r) { return (r.risk_type || '').trim() === selected; });
+        renderRisksList(filtered);
+      } else {
+        renderRisksList(lastDashboardRisks);
+      }
+    }
+
+    /** Отрисовка списка рисков в #risksList (без запроса). */
+    function renderRisksList(risks) {
+      const risksList = document.getElementById('risksList');
+      const countEl = document.getElementById('risksUniqueCount');
+      if (!risksList) return;
+      if (countEl) {
+        var n = Array.isArray(risks) ? risks.length : 0;
+        countEl.textContent = n === 0 ? 'Уникальных рисков: 0' : 'Уникальных рисков: ' + n.toLocaleString('ru-RU');
+      }
+      risksList.innerHTML = '';
+      if (!Array.isArray(risks) || risks.length === 0) {
+        risksList.innerHTML = '<li>Нет рисков за выбранный период и фильтр.</li>';
+      } else {
+        function esc(s) { if (s == null) return ''; var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+        risks.forEach(r => {
+          const li = document.createElement('li');
+          li.className = 'clickable';
+          li.dataset.riskId = String(r.id);
+          li.dataset.riskType = r.risk_type || '';
+          const bankName = r.bank ? r.bank.name : 'Не указан';
+          const count = r.reviews_count != null ? r.reviews_count : 1;
+          const desc = (r.description || '').trim() || (r.risk_type || 'Риск');
+          const typeLabel = (r.risk_type || '').trim() ? '<span style="font-size: 11px; color: #888;">' + esc((r.risk_type || '').slice(0, 40)) + '</span>' : '';
+          li.innerHTML = `<strong>${esc(desc.slice(0, 400))}</strong> <span style="font-size: 12px; color: #667eea; font-weight: 600;">(${count} ${count === 1 ? 'отзыв' : count < 5 ? 'отзыва' : 'отзывов'})</span><br/>${typeLabel ? typeLabel + ' · ' : ''}<span style="font-size: 12px;">${esc(bankName)}, ${formatDateDisplay(r.created_at)}</span>`;
+          risksList.appendChild(li);
+        });
+      }
+    }
+
+    function renderBankScores(scores) {
+      const wrap = document.getElementById('bankScoresRanking');
+      if (!wrap) return;
+      if (!Array.isArray(scores) || scores.length === 0) {
+        wrap.innerHTML = '<p style="color: #666;">Нет данных за период.</p>';
+        return;
+      }
+      function esc(s) { if (s == null) return ''; var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+      const rows = scores.slice(0, 20).map(function(s, i) {
+        return '<tr><td style="padding:6px;">' + (i + 1) + '</td><td style="padding:6px; font-weight:600;">' + esc(s.bank_name || '') + '</td><td style="padding:6px;">' + Number(s.risk_score).toFixed(4) + '</td><td style="padding:6px;">' + (s.avg_severity != null ? Number(s.avg_severity).toFixed(4) : '—') + '</td><td style="padding:6px;">' + s.risks_count + '</td><td style="padding:6px;">' + s.total_reviews + '</td></tr>';
+      }).join('');
+      wrap.innerHTML = '<table style="width:100%; border-collapse: collapse; font-size: 12px;"><thead><tr><th>#</th><th>Банк</th><th>Агрегированный показатель рисков</th><th>Средняя серьёзность отзыва</th><th>Уникальных рисков</th><th>Негативных отзывов</th></tr></thead><tbody>' + rows + '</tbody></table>';
+    }
+
+    async function loadReviewsOverTime() {
+      try {
+        const params = buildAnalyticsParams();
+        const bankId = (document.getElementById('reviewsOverTimeBankFilter') || {}).value || '';
+        if (bankId) params.set('bank_id', bankId);
+        const groupBy = (document.getElementById('reviewsOverTimeGroupBy') || {}).value || 'week';
+        params.set('group_by', groupBy);
+        const resp = await fetch('/analytics/reviews-over-time?' + params.toString());
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const buckets = Array.isArray(data.buckets) ? data.buckets : [];
+        const roEl = document.getElementById('reviewsOverTime');
+        if (!roEl) return;
+        if (reviewsOverTimeChart) { reviewsOverTimeChart.destroy(); reviewsOverTimeChart = null; }
+        var totalReviews = 0;
+        var totalRisks = 0;
+        buckets.forEach(function(b) {
+          totalReviews += (b.positive || 0) + (b.negative || 0);
+          totalRisks += b.risks_count || 0;
+        });
+        var elRev = document.getElementById('rotTotalReviews');
+        var elRisk = document.getElementById('rotUniqueRisks');
+        if (elRev) elRev.textContent = totalReviews.toLocaleString('ru-RU');
+        if (elRisk) elRisk.textContent = totalRisks.toLocaleString('ru-RU');
+        if (buckets.length === 0) return;
+        const labels = buckets.map(b => (b.date ? formatDateDisplay(b.date) : ''));
+        reviewsOverTimeChart = new Chart(roEl, {
+          type: 'bar',
+          data: {
+            labels: labels,
+            datasets: [
+              { label: 'Позитивные', data: buckets.map(b => b.positive ?? 0), backgroundColor: 'rgba(76, 175, 80, 0.8)' },
+              { label: 'Негативные', data: buckets.map(b => b.negative ?? 0), backgroundColor: 'rgba(244, 67, 54, 0.8)' },
+              { label: 'Уникальных рисков', data: buckets.map(b => b.risks_count ?? 0), backgroundColor: 'rgba(54, 162, 235, 0.8)' }
+            ]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            scales: {
+              x: { stacked: false, grid: { display: false }, ticks: { maxRotation: 45, minRotation: 45 }, barPercentage: 0.7, categoryPercentage: 0.8 },
+              y: { beginAtZero: true, stacked: false }
+            },
+            plugins: { legend: { display: true } }
+          }
+        });
+      } catch (e) { console.error('loadReviewsOverTime:', e); }
+    }
+
+    async function loadRiskTrends() {
+      try {
+        const params = buildAnalyticsParams();
+        const bankId = (document.getElementById('riskTrendsBankFilter') || {}).value || '';
+        if (bankId) params.set('bank_id', bankId);
+        const groupBy = (document.getElementById('riskTrendsGroupBy') || {}).value || 'week';
+        params.set('group_by', groupBy);
+        params.set('limit_risks', '50');
+        const resp = await fetch('/analytics/risk-trends?' + params.toString());
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const intervals = data.intervals || [];
+        const el = document.getElementById('riskTrendsChart');
+        if (!el) return;
+        if (riskTrendsChart) { riskTrendsChart.destroy(); riskTrendsChart = null; }
+        if (intervals.length === 0) return;
+        const labels = intervals.map(function(b) { return formatDateDisplay(b.start); });
+        // Агрегируем по виду риска (risk_type): сумма count = количество отзывов по каждому виду
+        const typeByInterval = {};
+        const riskTypeSet = {};
+        intervals.forEach(function(b, idx) {
+          typeByInterval[idx] = {};
+          (b.risks || []).forEach(function(x) {
+            var t = (x.risk_type || '').trim();
+            if (t) {
+              riskTypeSet[t] = true;
+              typeByInterval[idx][t] = (typeByInterval[idx][t] || 0) + (x.count || 0);
+            }
+          });
+        });
+        const riskTypes = Object.keys(riskTypeSet);
+        const typeTotals = {};
+        riskTypes.forEach(function(t) { typeTotals[t] = 0; });
+        intervals.forEach(function(_, idx) {
+          riskTypes.forEach(function(t) {
+            typeTotals[t] = (typeTotals[t] || 0) + (typeByInterval[idx][t] || 0);
+          });
+        });
+        riskTypes.sort(function(a, b) { return (typeTotals[b] || 0) - (typeTotals[a] || 0); });
+        const colors = ['#667eea', '#764ba2', '#f093fb', '#4facfe', '#43e97b', '#fa709a', '#fee140', '#30cfd0', '#a8edea', '#fed6e3'];
+        const datasets = riskTypes.map(function(t, i) {
+          return {
+            label: t.slice(0, 40),
+            data: intervals.map(function(_, idx) { return typeByInterval[idx][t] || 0; }),
+            backgroundColor: colors[i % colors.length],
+            borderColor: colors[i % colors.length],
+            borderWidth: 1
+          };
+        });
+        riskTrendsChart = new Chart(el, {
+          type: 'bar',
+          data: { labels: labels, datasets: datasets },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+              x: { stacked: true },
+              y: { stacked: true, beginAtZero: true }
+            }
+          }
+        });
+      } catch (e) { console.error('loadRiskTrends:', e); }
+    }
+
+    async function loadRiskMatrix() {
+      try {
+        const params = buildAnalyticsParams();
+        params.set('limit_risks', '15');
+        const resp = await fetch('/analytics/risk-matrix?' + params.toString());
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const cells = data.cells || [];
+        const banks = data.banks || [];
+        const wrap = document.getElementById('riskMatrixWrap');
+        if (!wrap) return;
+        if (cells.length === 0) {
+          wrap.innerHTML = '<p style="color: #666;">Нет данных за период.</p>';
+          return;
+        }
+        const byKey = {};
+        cells.forEach(function(c) { byKey[c.bank_id + '_' + c.risk_type] = c.avg_criticality; });
+        const bankIds = cells.map(function(c) { return c.bank_id; }).filter(function(v, i, a) { return a.indexOf(v) === i; });
+        const bankNames = {};
+        banks.forEach(function(b) { bankNames[b.id] = b.name; });
+        const riskTypes = data.risk_types || [];
+        function esc(s) { if (s == null) return ''; var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+        var html = '<table style="width:100%; border-collapse: collapse; font-size: 12px;"><thead><tr><th>Банк \\ Вид риска</th>';
+        riskTypes.forEach(function(t) { html += '<th title="' + esc(t) + '">' + esc(t) + '</th>'; });
+        html += '</tr></thead><tbody>';
+        bankIds.forEach(function(bid) {
+          html += '<tr><td style="font-weight:600;">' + esc(bankNames[bid] || String(bid)) + '</td>';
+          riskTypes.forEach(function(t) {
+            var avg = byKey[bid + '_' + t];
+            var disp = avg != null ? Number(avg).toFixed(1) : '—';
+            var pct = (avg != null && avg >= 1 && avg <= 5) ? ((avg - 1) / 4) * 100 : 0;
+            var bg = pct >= 70 ? 'rgba(244,67,54,0.5)' : pct >= 40 ? 'rgba(255,152,0,0.4)' : avg != null ? 'rgba(76,175,80,0.3)' : 'transparent';
+            html += '<td style="padding:6px; background:' + bg + ';" title="' + esc(t) + ': ср. серьёзность ' + disp + '">' + disp + '</td>';
+          });
+          html += '</tr>';
+        });
+        html += '</tbody></table>';
+        wrap.innerHTML = html;
+      } catch (e) { console.error('loadRiskMatrix:', e); }
+    }
+
+    async function loadReviewCriticality() {
+      try {
+        const params = buildAnalyticsParams();
+        const resp = await fetch('/analytics/review-criticality?' + params.toString());
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const banks = data.banks || [];
+        const el = document.getElementById('reviewCriticalityChart');
+        if (!el) return;
+        if (reviewCriticalityChart) { reviewCriticalityChart.destroy(); reviewCriticalityChart = null; }
+        if (banks.length === 0) return;
+        const labels = banks.map(function(b) { return b.bank_name || 'Банк ' + b.bank_id; });
+        const ds1 = banks.map(function(b) { var d = b.distribution && b.distribution.find(function(x) { return x.score === 1; }); return d ? d.count : 0; });
+        const ds2 = banks.map(function(b) { var d = b.distribution && b.distribution.find(function(x) { return x.score === 2; }); return d ? d.count : 0; });
+        const ds3 = banks.map(function(b) { var d = b.distribution && b.distribution.find(function(x) { return x.score === 3; }); return d ? d.count : 0; });
+        const ds4 = banks.map(function(b) { var d = b.distribution && b.distribution.find(function(x) { return x.score === 4; }); return d ? d.count : 0; });
+        const ds5 = banks.map(function(b) { var d = b.distribution && b.distribution.find(function(x) { return x.score === 5; }); return d ? d.count : 0; });
+        reviewCriticalityChart = new Chart(el, {
+          type: 'bar',
+          data: {
+            labels: labels,
+            datasets: [
+              { label: '1', data: ds1, backgroundColor: 'rgba(76, 175, 80, 0.8)' },
+              { label: '2', data: ds2, backgroundColor: 'rgba(139, 195, 74, 0.8)' },
+              { label: '3', data: ds3, backgroundColor: 'rgba(255, 193, 7, 0.8)' },
+              { label: '4', data: ds4, backgroundColor: 'rgba(255, 152, 0, 0.8)' },
+              { label: '5', data: ds5, backgroundColor: 'rgba(244, 67, 54, 0.8)' }
+            ]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } },
+            plugins: { legend: { position: 'bottom' } }
+          }
+        });
+      } catch (e) { console.error('loadReviewCriticality:', e); }
+    }
+
+    /** Загружает только блок «Актуальные риски» (без перерисовки графиков). */
+    async function loadRisksBlockOnly() {
+      try {
+        const url = buildDashboardUrl();
+        const resp = await fetch(url);
+        if (!resp.ok) return;
+        const data = await resp.json().catch(() => ({}));
+        const risks = Array.isArray(data.risks) ? data.risks : [];
+        updateRisksListWithTypeFilter(risks);
+      } catch (_) { /* ignore */ }
+    }
+
+    /** Во время длительной операции (stream) периодически обновляет дашборд и карту векторов. */
+    async function runWithAutoRefresh(streamPromise, options) {
+      const { refreshVectorMap = false, updateSentiment = true } = options || {};
+      const REFRESH_INTERVAL_MS = 4000;
+      let intervalId = setInterval(async () => {
+        try {
+          await loadDashboardData(updateSentiment);
+          if (refreshVectorMap) await loadVectorMap();
+        } catch (_) { /* ignore */ }
+      }, REFRESH_INTERVAL_MS);
+      try {
+        const result = await streamPromise;
+        return result;
+      } finally {
+        clearInterval(intervalId);
+        try {
+          await loadDashboardData(updateSentiment);
+          if (refreshVectorMap) await loadVectorMap();
+        } catch (_) { /* ignore */ }
+      }
+    }
+
+    async function loadDashboardData(updateSentiment = true) {
+      const url = buildDashboardUrl();
+      const resp = await fetch(url);
+      if (!resp.ok) {
+        console.error('Dashboard load failed:', resp.status, await resp.text());
+        setStatus('Ошибка загрузки дашборда: ' + resp.status, false);
+        return;
+      }
+      const data = await resp.json().catch(() => ({}));
+      // Список рисков и плашка дат обновляем всегда (по фильтрам), даже при пустом ответе
+      updateRisksListWithTypeFilter(Array.isArray(data.risks) ? data.risks : []);
+      updateDateRangePlaque(data.reviews_date_min ?? null, data.reviews_date_max ?? null);
+      setDefaultPeriodDates(data.reviews_date_min ?? null, data.reviews_date_max ?? null);
+
+      window._dashboardUpdatingFilter = true;
+      try {
+      const banks = Array.isArray(data.banks) ? data.banks : [];
+      banks.sort((a, b) => (b.total_reviews || 0) - (a.total_reviews || 0));
+      const overall = Array.isArray(data.overall) ? data.overall : [];
+      const hasExistingCharts = !!(reviewsByBankChart || sentimentChart);
+      const responseEmpty = banks.length === 0 && overall.length === 0;
+      if (responseEmpty && hasExistingCharts) {
+        window._dashboardUpdatingFilter = false;
+        return;
+      }
+      const bankNames = banks.map(b => (b.bank && b.bank.name) || '');
+      const reviewsCounts = banks.map(b => b.total_reviews ?? 0);
+      const positiveByBank = banks.map(b => b.positive_reviews ?? 0);
+      const negativeByBank = banks.map(b => b.negative_reviews ?? 0);
+      const avgRatings = banks.map(b => b.avg_rating ?? 0);
+
+      // Reviews by bank — только позитивные и негативные
+      try {
+        if (reviewsByBankChart) reviewsByBankChart.destroy();
+        const rbEl = document.getElementById('reviewsByBank');
+        if (rbEl) {
+          reviewsByBankChart = new Chart(rbEl, {
+            type: 'bar',
+            data: {
+              labels: bankNames,
+              datasets: [
+                { label: 'Позитивные', data: positiveByBank, backgroundColor: 'rgba(76, 175, 80, 0.8)' },
+                { label: 'Негативные', data: negativeByBank, backgroundColor: 'rgba(244, 67, 54, 0.8)' }
+              ]
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              scales: { x: { stacked: true }, y: { stacked: true } },
+              plugins: { legend: { display: true } }
+            }
+          });
+        }
+      } catch (e) { console.error('reviewsByBank chart:', e); }
+
+      // Rating by bank
+      try {
+        if (ratingByBankChart) ratingByBankChart.destroy();
+        const rtEl = document.getElementById('ratingByBank');
+        if (rtEl) {
+          ratingByBankChart = new Chart(rtEl, {
+            type: 'bar',
+            data: {
+              labels: bankNames,
+              datasets: [{
+                label: 'Средний рейтинг',
+                data: avgRatings,
+                backgroundColor: 'rgba(75, 192, 192, 0.6)'
+              }]
+            },
+            options: {
+              scales: { y: { min: 0, max: 5 } },
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: { legend: { display: false } }
+            }
+          });
+        }
+      } catch (e) { console.error('ratingByBank chart:', e); }
+
+      // Распределение сентимента — только позитивные и негативные
+      const sentiment = data.sentiment || { positive: 0, negative: 0 };
+      const pos = Number(sentiment.positive) || 0;
+      const neg = Number(sentiment.negative) || 0;
+      const sentimentCanvas = document.getElementById('sentimentChart');
+      if (sentimentCanvas) {
+        try {
+          if (sentimentChart) {
+            sentimentChart.data.labels = ['Позитивные', 'Негативные'];
+            sentimentChart.data.datasets[0].data = [pos, neg];
+            sentimentChart.data.datasets[0].backgroundColor = ['rgba(76, 175, 80, 0.8)', 'rgba(244, 67, 54, 0.8)'];
+            sentimentChart.data.datasets[0].borderColor = ['rgba(76, 175, 80, 1)', 'rgba(244, 67, 54, 1)'];
+            sentimentChart.update('none');
+          } else {
+            sentimentChart = new Chart(sentimentCanvas, {
+              type: 'doughnut',
+              data: {
+                labels: ['Позитивные', 'Негативные'],
+                datasets: [{
+                  data: [pos, neg],
+                  backgroundColor: ['rgba(76, 175, 80, 0.8)', 'rgba(244, 67, 54, 0.8)'],
+                  borderColor: ['rgba(76, 175, 80, 1)', 'rgba(244, 67, 54, 1)'],
+                  borderWidth: 2,
+                  hoverOffset: 8
+                }]
+              },
+              options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                aspectRatio: 1.2,
+                plugins: {
+                  legend: {
+                    position: 'bottom',
+                    labels: {
+                      padding: 15,
+                      font: { size: 12, weight: '600' },
+                      usePointStyle: true
+                    }
+                  },
+                  tooltip: {
+                    callbacks: {
+                      label: function(context) {
+                        const label = context.label || '';
+                        const value = context.parsed ?? 0;
+                        const total = (context.dataset.data.reduce((a, b) => a + b, 0)) || 1;
+                        const percentage = ((value / total) * 100).toFixed(1);
+                        return `${label}: ${value} (${percentage}%)`;
+                      }
+                    }
+                  }
+                },
+                cutout: '60%'
+              }
+            });
+          }
+        } catch (e) { console.error('sentiment chart:', e); }
+      }
+
+      // Обновляем статистику отзывов (с защитой от отсутствующих полей)
+      const totalReviews = Number(data.total_reviews) || 0;
+      const totalBanks = Number(data.total_banks) || 0;
+      const withSent = Number(data.reviews_with_sentiment) || 0;
+      const withoutSent = Number(data.reviews_without_sentiment) || 0;
+      const negWithout = Number(data.negative_reviews_without_risk) || 0;
+      const negWith = Number(data.negative_reviews_with_risk) || 0;
+      const el = (id) => document.getElementById(id);
+      if (el('totalReviews')) el('totalReviews').textContent = totalReviews.toLocaleString('ru-RU');
+      if (el('totalBanks')) el('totalBanks').textContent = totalBanks.toLocaleString('ru-RU');
+      if (el('reviewsWithSentiment')) el('reviewsWithSentiment').textContent = withSent.toLocaleString('ru-RU');
+      if (el('reviewsWithoutSentiment')) el('reviewsWithoutSentiment').textContent = withoutSent.toLocaleString('ru-RU');
+      if (el('negativeWithoutRisk')) el('negativeWithoutRisk').textContent = negWithout.toLocaleString('ru-RU');
+      if (el('negativeWithRisk')) el('negativeWithRisk').textContent = negWith.toLocaleString('ru-RU');
+
+      // Фильтр банка для «Динамика количества отзывов»
+      const rotBankFilter = document.getElementById('reviewsOverTimeBankFilter');
+      if (rotBankFilter) {
+        const curRotBank = rotBankFilter.value;
+        rotBankFilter.innerHTML = '<option value="">Все банки</option>';
+        banks.forEach(b => {
+          const opt = document.createElement('option');
+          opt.value = String(b.bank.id);
+          opt.textContent = b.bank.name;
+          if (String(b.bank.id) === curRotBank) opt.selected = true;
+          rotBankFilter.appendChild(opt);
+        });
+        if (!rotBankFilter.value) rotBankFilter.value = '';
+      }
+      loadReviewsOverTime();
+
+      // Пересчёт размеров Chart.js после layout (rAF + небольшая задержка для полной отрисовки)
+      const charts = [reviewsByBankChart, ratingByBankChart, sentimentChart, reviewsOverTimeChart, riskTrendsChart, reviewCriticalityChart];
+      const doResize = () => charts.forEach(ch => { if (ch && typeof ch.resize === 'function') ch.resize(); });
+      requestAnimationFrame(doResize);
+      setTimeout(doResize, 150);
+
+      // Список банков для фильтра рисков (без лишнего срабатывания change)
+      const bankFilter = document.getElementById('risksBankFilter');
+      const currentBankId = bankFilter.value;
+      bankFilter.innerHTML = '<option value="">Все банки</option>';
+      banks.forEach(b => {
+        const opt = document.createElement('option');
+        opt.value = String(b.bank.id);
+        opt.textContent = b.bank.name;
+        if (String(b.bank.id) === currentBankId) opt.selected = true;
+        bankFilter.appendChild(opt);
+      });
+      if (currentBankId && !bankFilter.value) bankFilter.value = currentBankId;
+
+      // Рейтинг по рисковости и аналитика
+      renderBankScores(Array.isArray(data.bank_scores) ? data.bank_scores : []);
+      const riskTrendsBankFilter = document.getElementById('riskTrendsBankFilter');
+      if (riskTrendsBankFilter) {
+        const curVal = riskTrendsBankFilter.value;
+        riskTrendsBankFilter.innerHTML = '<option value="">Все банки</option>';
+        banks.forEach(b => {
+          const opt = document.createElement('option');
+          opt.value = String(b.bank.id);
+          opt.textContent = b.bank.name;
+          if (String(b.bank.id) === curVal) opt.selected = true;
+          riskTrendsBankFilter.appendChild(opt);
+        });
+        if (!riskTrendsBankFilter.value) riskTrendsBankFilter.value = '';
+      }
+      loadRiskTrends();
+      loadRiskMatrix();
+      loadReviewCriticality();
+      } finally {
+        window._dashboardUpdatingFilter = false;
+      }
+    }
+
+    let vectorMapLoadInProgress = false;
+    async function loadVectorMap() {
+      if (vectorMapLoadInProgress) return;
+      vectorMapLoadInProgress = true;
+      try {
+        const params = buildAnalyticsParams();
+        const resp = await fetch(`/vectors/map?${params.toString()}`);
+        const data = await resp.json().catch(() => ({}));
+        const rawPoints = Array.isArray(data.points) ? data.points : [];
+
+        const emptyEl = document.getElementById('vectorMapEmptyMessage');
+        const vmElForEmpty = document.getElementById('vectorMap');
+        if (rawPoints.length === 0) {
+          if (emptyEl) { emptyEl.style.display = 'flex'; }
+          const existingChart = vmElForEmpty ? Chart.getChart(vmElForEmpty) : null;
+          if (existingChart) existingChart.destroy();
+          vectorMapChart = null;
+          const countsEl = document.getElementById('vectorMapCounts');
+          if (countsEl) countsEl.textContent = 'Всего на карте: 0 (позитивных: 0, негативных: 0)';
+          vectorMapLoadInProgress = false;
+          return;
+        }
+        if (emptyEl) emptyEl.style.display = 'none';
+
+        const nPos = rawPoints.filter(p => p && p.sentiment === 'positive').length;
+        const nNeg = rawPoints.filter(p => p && p.sentiment === 'negative').length;
+        const countsEl = document.getElementById('vectorMapCounts');
+        if (countsEl) countsEl.textContent = 'Всего на карте: ' + rawPoints.length + ' (позитивных: ' + nPos + ', негативных: ' + nNeg + ')';
+
+        const showPositive = document.getElementById('sentimentPositive').checked;
+        const showNegative = document.getElementById('sentimentNegative').checked;
+
+        const points = rawPoints
+          .filter(p => p != null && typeof p === 'object' && typeof p.x === 'number' && typeof p.y === 'number')
+          .filter(p => {
+            const s = p.sentiment;
+            if (s === 'positive' && !showPositive) return false;
+            if (s === 'negative' && !showNegative) return false;
+            if (s === 'neutral') return false;
+            return true;
+          })
+          .map(p => ({
+            x: p.x,
+            y: p.y,
+            review_id: p.review_id,
+            bank_id: p.bank_id,
+            rating: p.rating,
+            sentiment: p.sentiment ?? null,
+          }));
+
+        const vmEl = document.getElementById('vectorMap');
+        if (!vmEl) return;
+        const existingChart = Chart.getChart(vmEl);
+        if (existingChart) {
+          existingChart.destroy();
+        }
+        vectorMapChart = null;
+        vectorMapChart = new Chart(vmEl, {
+        type: 'scatter',
+        data: {
+          datasets: [{
+            label: 'Отзывы',
+            data: points,
+            backgroundColor: ctx => {
+              const s = ctx?.raw?.sentiment;
+              if (s === 'positive') return 'rgba(76, 175, 80, 0.6)';
+              if (s === 'negative') return 'rgba(244, 67, 54, 0.6)';
+              return 'rgba(158, 158, 158, 0.6)';
+            },
+            borderColor: ctx => {
+              const s = ctx?.raw?.sentiment;
+              if (s === 'positive') return 'rgba(76, 175, 80, 1)';
+              if (s === 'negative') return 'rgba(244, 67, 54, 1)';
+              return 'rgba(158, 158, 158, 1)';
+            },
+            borderWidth: 1,
+            pointRadius: 4,
+            pointHoverRadius: 6,
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: true,
+          aspectRatio: 2,
+          layout: { padding: 8 },
+          onClick: async (event, elements) => {
+            if (elements && elements.length > 0) {
+              const element = elements[0];
+              const datasetIndex = element.datasetIndex;
+              const index = element.index;
+              const point = vectorMapChart.data.datasets[datasetIndex].data[index];
+              if (point && point.review_id) {
+                await showReviewDetails(point.review_id);
+              }
+            } else {
+              // Альтернативный способ для scatter chart
+              const canvasPosition = Chart.helpers.getRelativePosition(event, vectorMapChart);
+              const dataX = vectorMapChart.scales.x.getValueForPixel(canvasPosition.x);
+              const dataY = vectorMapChart.scales.y.getValueForPixel(canvasPosition.y);
+              
+              // Находим ближайшую точку
+              const dataset = vectorMapChart.data.datasets[0];
+              let closestPoint = null;
+              let minDist = Infinity;
+              
+              for (const p of dataset.data) {
+                const dist = Math.sqrt(Math.pow(p.x - dataX, 2) + Math.pow(p.y - dataY, 2));
+                if (dist < minDist && dist < 0.5) { // Порог близости
+                  minDist = dist;
+                  closestPoint = p;
+                }
+              }
+              
+              if (closestPoint && closestPoint.review_id) {
+                await showReviewDetails(closestPoint.review_id);
+              }
+            }
+          },
+          plugins: {
+            tooltip: {
+              callbacks: {
+                label: ctx => {
+                  const p = ctx?.raw;
+                  if (!p) return '';
+                  const x = typeof p.x === 'number' ? p.x.toFixed(2) : '-';
+                  const y = typeof p.y === 'number' ? p.y.toFixed(2) : '-';
+                  return `Сентимент: ${p.sentiment ?? '-'}, Рейтинг: ${p.rating ?? '-'}, Координаты: (${x}, ${y})`;
+                },
+                footer: () => 'Нажмите на точку для деталей'
+              }
+            },
+            legend: { display: false }
+          },
+          scales: {
+            x: {
+              title: { display: true, text: 'UMAP-1', font: { weight: 'bold' } },
+              grid: { color: 'rgba(0, 0, 0, 0.05)' }
+            },
+            y: {
+              title: { display: true, text: 'UMAP-2', font: { weight: 'bold' } },
+              grid: { color: 'rgba(0, 0, 0, 0.05)' }
+            }
+          }
+        }
+      });
+      } finally {
+        vectorMapLoadInProgress = false;
+      }
+    }
+
+    // Обработчики для чекбоксов сентимента
+    document.getElementById('sentimentPositive').addEventListener('change', loadVectorMap);
+    document.getElementById('sentimentNegative').addEventListener('change', loadVectorMap);
+
+    // Функция для показа деталей отзыва
+    async function showReviewDetails(reviewId) {
+      const modal = document.getElementById('reviewModal');
+      const detailsDiv = document.getElementById('reviewDetails');
+      
+      modal.classList.add('active');
+      detailsDiv.innerHTML = `
+        <div style="text-align: center; padding: 20px;">
+          <div class="spinner" style="border: 4px solid #f3f3f3; border-top: 4px solid #667eea; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto;"></div>
+          <p style="margin-top: 12px; color: #666;">Загрузка...</p>
+        </div>
+      `;
+
+      try {
+        const resp = await fetch(`/review/${reviewId}`);
+        if (!resp.ok) {
+          throw new Error('Отзыв не найден');
+        }
+        const review = await resp.json();
+
+        const sentimentBadge = review.sentiment 
+          ? `<span class="badge badge-${review.sentiment === 'positive' ? 'positive' : 'negative'}">${review.sentiment === 'positive' ? '✅ Позитивный' : '❌ Негативный'}</span>`
+          : '<span style="color: #999;">Не определён</span>';
+
+        const criticalityLabels = { 1: 'очень низкая', 2: 'низкая', 3: 'средняя', 4: 'высокая', 5: 'критическая' };
+        const criticalityBadge = review.criticality_score != null
+          ? `<span class="badge" style="background: ${review.criticality_score >= 4 ? '#dc3545' : review.criticality_score >= 3 ? '#fd7e14' : '#6c757d'}; color: #fff;">${review.criticality_score} / 5 — ${criticalityLabels[review.criticality_score] || ''}</span>`
+          : '<span style="color: #999;">Не оценена</span>';
+
+        detailsDiv.innerHTML = `
+          <div class="info-row">
+            <span class="info-label">🏦 Банк:</span>
+            <span class="info-value"><strong>${review.bank ? review.bank.name : 'Не указан'}</strong></span>
+          </div>
+          ${review.rating ? `
+          <div class="info-row">
+            <span class="info-label">⭐ Рейтинг:</span>
+            <span class="info-value">${review.rating.toFixed(1)} / 5.0</span>
+          </div>
+          ` : ''}
+          <div class="info-row">
+            <span class="info-label">💭 Сентимент:</span>
+            <span class="info-value">${sentimentBadge}${review.sentiment_score ? ` (${(review.sentiment_score * 100).toFixed(1)}%)` : ''}</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">⚠️ Степень критичности:</span>
+            <span class="info-value">${criticalityBadge}</span>
+          </div>
+          ${review.title ? `
+          <div class="info-row">
+            <span class="info-label">📌 Заголовок:</span>
+            <span class="info-value"><strong>${review.title}</strong></span>
+          </div>
+          ` : ''}
+          <div class="info-row" style="flex-direction: column; align-items: flex-start;">
+            <span class="info-label" style="margin-bottom: 8px;">📝 Текст отзыва:</span>
+            <div class="review-text">${review.text}</div>
+          </div>
+          <div class="info-row">
+            <span class="info-label">📅 Опубликован:</span>
+            <span class="info-value">${review.published_at ? formatDateDisplay(review.published_at) : 'Не указано'}</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">🕐 Собран:</span>
+            <span class="info-value">${formatDateDisplay(review.scraped_at)}</span>
+          </div>
+        `;
+      } catch (e) {
+        console.error(e);
+        detailsDiv.innerHTML = `
+          <div style="text-align: center; padding: 20px; color: #f44336;">
+            <p>❌ Ошибка при загрузке деталей отзыва</p>
+            <p style="font-size: 14px; margin-top: 8px;">${e.message}</p>
+          </div>
+        `;
+      }
+    }
+
+    function closeReviewModal() {
+      document.getElementById('reviewModal').classList.remove('active');
+    }
+
+    async function showRiskReviews(riskId, riskTitle) {
+      const modal = document.getElementById('riskReviewsModal');
+      const listEl = document.getElementById('riskReviewsList');
+      const cardEl = document.getElementById('riskDetailCard');
+      const titleEl = document.getElementById('riskReviewsModalTitle');
+      titleEl.textContent = '📋 Риск';
+      cardEl.style.display = 'none';
+      cardEl.innerHTML = '';
+      modal.classList.add('active');
+      listEl.innerHTML = `
+        <div style="text-align: center; padding: 20px;">
+          <div class="spinner" style="border: 4px solid #f3f3f3; border-top: 4px solid #667eea; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto;"></div>
+          <p style="margin-top: 12px; color: #666;">Загрузка...</p>
+        </div>
+      `;
+      try {
+        const resp = await fetch(`/risks/${riskId}`);
+        if (!resp.ok) throw new Error('Не удалось загрузить данные риска');
+        const data = await resp.json();
+        const risk = data.risk || {};
+        const reviews = data.reviews || [];
+        titleEl.textContent = '📋 ' + (risk.risk_type || riskTitle || 'Риск');
+        var cardHtml = '<div style="font-size: 13px;">';
+        cardHtml += '<div style="margin-bottom: 10px;"><strong style="color: #444;">Вид:</strong> ' + escapeHtml(risk.risk_type || '—') + '</div>';
+        cardHtml += '<div style="margin-bottom: 10px;"><strong style="color: #444;">Описание:</strong> <span style="color: #333;">' + escapeHtml(risk.description || '—') + '</span></div>';
+        var factors = risk.risk_factors;
+        if (Array.isArray(factors) && factors.length > 0) {
+          cardHtml += '<div><strong style="color: #444;">Риск-факторы:</strong><ul style="margin: 4px 0 0 18px; padding: 0;">' + factors.map(function(f) { return '<li>' + escapeHtml(String(f)) + '</li>'; }).join('') + '</ul></div>';
+        } else {
+          cardHtml += '<div><strong style="color: #444;">Риск-факторы:</strong> —</div>';
+        }
+        cardHtml += '</div>';
+        cardEl.innerHTML = cardHtml;
+        cardEl.style.display = 'block';
+        if (reviews.length === 0) { 
+          listEl.innerHTML = '<p style="padding: 16px; color: #666;">С этим риском не связаны отзывы.</p>';
+          return;
+        }
+        const critLabels = { 1: 'очень низкая', 2: 'низкая', 3: 'средняя', 4: 'высокая', 5: 'критическая' };
+        listEl.innerHTML = '<p style="margin-bottom: 10px; font-weight: 600; color: #333;">Отзывы:</p><ul style="list-style: none; padding: 0;">' + reviews.map(rev => {
+          const title = (rev.title || 'Без заголовка').slice(0, 80);
+          const textPreview = (rev.text || '').slice(0, 150) + (rev.text && rev.text.length > 150 ? '…' : '');
+          const critText = rev.criticality_score != null ? ` · Критичность: ${rev.criticality_score}/5 (${critLabels[rev.criticality_score] || ''})` : '';
+          return `<li class="risk-review-item" style="padding: 12px; margin-bottom: 8px; background: #f8f9fa; border-radius: 8px; border-left: 4px solid #667eea; cursor: pointer;" data-review-id="${rev.id}">
+            <strong style="display: block; margin-bottom: 4px;">${escapeHtml(title)}</strong>
+            <span style="font-size: 13px; color: #555;">${escapeHtml(textPreview)}</span>
+            <span style="font-size: 12px; color: #888; display: block; margin-top: 6px;">${rev.bank ? rev.bank.name : ''} · ${rev.published_at ? formatDateDisplay(rev.published_at) : ''}${critText}</span>
+          </li>`;
+        }).join('') + '</ul>';
+        listEl.querySelectorAll('.risk-review-item').forEach(li => {
+          li.addEventListener('click', function() {
+            const reviewId = parseInt(this.dataset.reviewId, 10);
+            closeRiskReviewsModal();
+            showReviewDetails(reviewId);
+          });
+        });
+      } catch (e) {
+        console.error(e);
+        listEl.innerHTML = `<div style="padding: 16px; color: #f44336;">Ошибка: ${e.message}</div>`;
+      }
+    }
+
+    function closeRiskReviewsModal() {
+      document.getElementById('riskReviewsModal').classList.remove('active');
+    }
+
+    function escapeHtml(s) {
+      const div = document.createElement('div');
+      div.textContent = s;
+      return div.innerHTML;
+    }
+
+    // Закрытие модального окна при клике вне его
+    document.getElementById('reviewModal').addEventListener('click', function(e) {
+      if (e.target === this) {
+        closeReviewModal();
+      }
+    });
+    document.getElementById('riskReviewsModal').addEventListener('click', function(e) {
+      if (e.target === this) {
+        closeRiskReviewsModal();
+      }
+    });
+
+    // Закрытие по Escape
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape') {
+        closeReviewModal();
+        closeRiskReviewsModal();
+      }
+    });
+
+    async function loadDatasetFromHF() {
+      const btn = document.getElementById('loadDatasetBtn');
+      const countEl = document.getElementById('datasetCountInput');
+      const count = Math.max(1, parseInt(countEl?.value || '50', 10) || 50);
+      btn.disabled = true;
+      setStatus(`Загрузка до ${count} новых отзывов из датасета...`, true);
+      try {
+        const resp = await fetch(`/dataset/load-russian-bank-reviews?limit=${count}`, { method: 'POST' });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+          throw new Error(data.detail || resp.statusText || 'Ошибка загрузки');
+        }
+        setStatus(`Добавлено ${data.inserted} отзывов.`);
+      } catch (e) {
+        console.error(e);
+        setStatus('Ошибка загрузки датасета: ' + (e.message || 'см. консоль'));
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    let autoProcessIntervalId = null;
+
+    function setAutoProcessButtonsEnabled(enabled) {
+      document.getElementById('generateEmbeddingsBtn').disabled = !enabled;
+      document.getElementById('generateRisksBtn').disabled = !enabled;
+    }
+
+    async function runOneAutoCycle() {
+      try {
+        setStatus('Auto: эмбеддинги...', true);
+        const emb = await consumeStream('/stream/embeddings/generate', {
+          onProgress: (d) => {
+            if (d && (d.total_so_far ?? 0) > 0) {
+              loadDashboardData(true);
+              loadVectorMap();
+            }
+          }
+        });
+        const embedded = emb.embedded_reviews || 0;
+        if (embedded > 0) {
+          await loadDashboardData(true);
+          await loadVectorMap();
+          setStatus(`Auto: эмбеддинги готовы (${embedded}). Запуск генерации рисков...`, true);
+        }
+        const riskData = await consumeStream('/stream/risks/generate', {
+          onProgress: (d) => {
+            if (d != null && typeof d.risks_created === 'number') loadRisksBlockOnly();
+          }
+        });
+        const totalRisks = riskData.risks_created || 0;
+        const totalProcessed = riskData.reviews_processed || 0;
+        if (totalProcessed > 0) await loadRisksBlockOnly();
+        setStatus(embedded > 0 || totalRisks > 0
+          ? `Auto: готово. Эмбеддинги: ${embedded}, рисков создано: ${totalRisks}.`
+          : 'Auto: необработанных отзывов нет. Следующая проверка через 60 с.', true);
+      } catch (e) {
+        console.error(e);
+        setStatus('Auto: ошибка — ' + (e.message || 'см. консоль'));
+      }
+    }
+
+    async function startAutoProcess() {
+      if (autoProcessIntervalId) return;
+      setAutoProcessButtonsEnabled(false);
+      await runOneAutoCycle();
+      autoProcessIntervalId = setInterval(async () => {
+        if (!document.getElementById('autoProcessToggle').checked) {
+          stopAutoProcess();
+          return;
+        }
+        await runOneAutoCycle();
+      }, 60000);
+    }
+
+    function stopAutoProcess() {
+      if (autoProcessIntervalId) {
+        clearInterval(autoProcessIntervalId);
+        autoProcessIntervalId = null;
+      }
+      setAutoProcessButtonsEnabled(true);
+    }
+
+    async function generateEmbeddings() {
+      try {
+        setStatus('Эмбеддинги: запуск...', true);
+        const data = await consumeStream('/stream/embeddings/generate', {
+          onProgress: (d) => {
+            if (d && (d.total_so_far ?? 0) > 0) {
+              loadDashboardData(true);
+              loadVectorMap();
+            }
+          }
+        });
+        await loadDashboardData(true);
+        await loadVectorMap();
+        setStatus(`Готово! Все эмбеддинги сгенерированы!.`);
+      } catch (e) {
+        console.error(e);
+        setStatus('Ошибка при генерации эмбеддингов: ' + (e.message || 'см. консоль'));
+      }
+    }
+
+    async function generateRisks() {
+      try {
+        setStatus('Генерация рисков (LLM): запуск (макс. 10 отзывов)...', true);
+        const data = await consumeStream('/stream/risks/generate?max_reviews=10', {
+          onProgress: (d) => {
+            if (d != null && typeof d.risks_created === 'number') loadRisksBlockOnly();
+          }
+        });
+        await loadRisksBlockOnly();
+        if (data.message) setStatus(data.message);
+        else setStatus(`Готово. Создано рисков: ${data.risks_created}, обработано отзывов: ${data.reviews_processed}.`);
+      } catch (e) {
+        console.error(e);
+        if (e.message && e.message.includes('400')) {
+          setStatus('Ошибка: LLM не сконфигурирован.');
+        } else {
+          setStatus('Ошибка при генерации рисков: ' + (e.message || 'см. консоль'));
+        }
+      }
+    }
+
+    document.getElementById('loadDatasetBtn').addEventListener('click', loadDatasetFromHF);
+    document.getElementById('autoProcessToggle').addEventListener('change', function() {
+      if (this.checked) {
+        startAutoProcess();
+      } else {
+        stopAutoProcess();
+      }
+    });
+    document.getElementById('generateEmbeddingsBtn').addEventListener('click', generateEmbeddings);
+    document.getElementById('generateRisksBtn').addEventListener('click', generateRisks);
+
+    // Период по всей странице задаётся в блоке «Актуальные риски» (risksDateFrom, risksDateTo)
+    let periodTimeout;
+    function schedulePeriodRefresh() {
+      clearTimeout(periodTimeout);
+      periodTimeout = setTimeout(async () => {
+        await loadDashboardData();
+        await loadVectorMap();
+      }, 400);
+    }
+
+    // Клик по риску в списке — показать отзывы по этому риску
+    document.getElementById('risksList').addEventListener('click', function(e) {
+      const li = e.target.closest('li.clickable');
+      if (!li || !li.dataset.riskId) return;
+      showRiskReviews(li.dataset.riskId, li.dataset.riskType || 'Риск');
+    });
+
+    // Фильтры рисков: при смене банка/критичности — только список рисков; при смене дат — весь дашборд.
+    let risksFilterTimeout;
+    function scheduleRisksFilterRefresh() {
+      clearTimeout(risksFilterTimeout);
+      risksFilterTimeout = setTimeout(() => loadRisksBlockOnly(), 300);
+    }
+    document.getElementById('risksBankFilter').addEventListener('change', scheduleRisksFilterRefresh);
+    document.getElementById('risksTypeFilter').addEventListener('change', function() {
+      const selected = this.value;
+      const filtered = !selected ? lastDashboardRisks : lastDashboardRisks.filter(function(r) { return (r.risk_type || '').trim() === selected; });
+      renderRisksList(filtered);
+    });
+    var riskTrendsBankEl = document.getElementById('riskTrendsBankFilter');
+    if (riskTrendsBankEl) riskTrendsBankEl.addEventListener('change', function() { loadRiskTrends(); });
+    var riskTrendsGroupEl = document.getElementById('riskTrendsGroupBy');
+    if (riskTrendsGroupEl) riskTrendsGroupEl.addEventListener('change', function() { loadRiskTrends(); });
+    var rotBankEl = document.getElementById('reviewsOverTimeBankFilter');
+    if (rotBankEl) rotBankEl.addEventListener('change', function() { loadReviewsOverTime(); });
+    var rotGroupEl = document.getElementById('reviewsOverTimeGroupBy');
+    if (rotGroupEl) rotGroupEl.addEventListener('change', function() { loadReviewsOverTime(); });
+    document.getElementById('risksDateFrom').addEventListener('change', function() {
+      schedulePeriodRefresh();
+    });
+    document.getElementById('risksDateTo').addEventListener('change', function() {
+      schedulePeriodRefresh();
+    });
+
+    (async function init() {
+      await loadDashboardData();
+      await loadVectorMap();
+    })();
+  </script>
+</body>
+</html>
