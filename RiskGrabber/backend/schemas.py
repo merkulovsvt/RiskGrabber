@@ -25,11 +25,12 @@ class BankBase(BaseModel):
 
 
 class RiskBase(BaseModel):
-    """Риск: вид (risk_type), описание, факторы."""
+    """Риск: вид (risk_type), описание, факторы, последствия."""
     id: int
     risk_type: str
     description: str = ""
     risk_factors: Optional[List[str]] = None
+    implications: Optional[List[str]] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -148,6 +149,29 @@ class RiskTrendBucket(BaseModel):
 class RiskTrendsResponse(BaseModel):
     intervals: List[RiskTrendBucket]
     risk_meta: List[RiskBase]  # unique risks with id, risk_type, description, risk_factors
+
+
+class HotRiskItem(BaseModel):
+    """Один риск в интервале «горячих рисков»: объём и взвешенная метрика (без LLM)."""
+    risk_id: int
+    risk_type: str
+    reviews_count: int
+    hot_score: float  # сумма criticality_score по отзывам за интервал (или count * avg)
+    avg_criticality: Optional[float] = None
+
+
+class HotRisksBucket(BaseModel):
+    start: dt.datetime
+    end: dt.datetime
+    hot_risks: List[HotRiskItem]
+
+
+class HotRisksResponse(BaseModel):
+    """Горячие риски по интервалам (день/неделя/месяц/год), опционально по банку."""
+    intervals: List[HotRisksBucket]
+    risk_meta: List[RiskBase]
+    bank_id: Optional[int] = None
+    bank_name: Optional[str] = None
 
 
 class BankRiskTrendsResponse(BaseModel):

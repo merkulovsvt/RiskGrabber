@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Literal, Optional, TypedDict
 
 import numpy as np
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session, selectinload
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -58,6 +59,7 @@ class PipelineState(TypedDict, total=False):
     is_new_risk: bool
     description: str
     risk_factors: Optional[List[str]]
+    implications: Optional[List[str]]
 
 
 llm = ChatOpenAI(
@@ -73,7 +75,8 @@ llm = ChatOpenAI(
         "presence_penalty": 1.5,
         "repetition_penalty": 1.0,
     },
-    timeout=240
+    max_retries=2,
+    timeout=10
 )
 
 structured_generator_llm = llm.with_structured_output(GeneratorRisk)
@@ -119,6 +122,7 @@ async def generator_agent(state: PipelineState) -> PipelineState:
             "risk_type": result.risk_type,
             "description": result.description,
             "risk_factors": result.risk_factor,
+            "implications": result.implications,
         }
         logger.info(
             "Отзыв %s — Генератор: получен риск, вид=%s, длина описания=%s",
@@ -152,6 +156,8 @@ async def critic_agent(state: PipelineState) -> PipelineState:
     risk_description = current_risk.get("description")
     risk_factors = current_risk.get("risk_factors")
     risk_factors_str = ", ".join(risk_factors) if isinstance(risk_factors, list) else (str(risk_factors or ""))
+    implications = current_risk.get("implications")
+    implications_str = ", ".join(implications) if isinstance(implications, list) else (str(implications or ""))
 
     user_content = CRITIC_USER_TEMPLATE.format(
         review_title=(review_title or "").strip(),
@@ -159,6 +165,7 @@ async def critic_agent(state: PipelineState) -> PipelineState:
         risk_type=(risk_type or "").strip(),
         risk_description=(risk_description or "").strip(),
         risk_factors=(risk_factors_str or "").strip(),
+        implications=(implications_str or "").strip(),
     )
     messages = [
         SystemMessage(content=CRITIC_SYSTEM),
@@ -206,6 +213,7 @@ async def dedub_agent(state: PipelineState) -> PipelineState:
         state["is_new_risk"] = True
         state["description"] = ""
         state["risk_factors"] = []
+        state["implications"] = []
         return state
 
     def _str(val):
@@ -230,11 +238,13 @@ async def dedub_agent(state: PipelineState) -> PipelineState:
         state["is_new_risk"] = False
         state["description"] = _str(current_risk.get("description"))
         state["risk_factors"] = _to_factors_list(current_risk.get("risk_factors"))
+        state["implications"] = _to_factors_list(current_risk.get("implications"))
         return state
 
     risk_type = _str(current_risk.get("risk_type"))
     description = _str(current_risk.get("description"))
     factors_list = _to_factors_list(current_risk.get("risk_factors"))
+    implications_list = _to_factors_list(current_risk.get("implications"))
 
     if known_risks:
         try:
@@ -244,6 +254,7 @@ async def dedub_agent(state: PipelineState) -> PipelineState:
                     "risk_type": r.get("risk_type", ''),
                     "description": r.get("description", ''),
                     "risk_factors": r.get("risk_factors", []),
+                    "implications": r.get("implications", []),
                 }
                 for r in known_risks
             ]
@@ -252,6 +263,7 @@ async def dedub_agent(state: PipelineState) -> PipelineState:
                 "risk_type": risk_type,
                 "description": description,
                 "risk_factors": factors_list,
+                "implications": implications_list,
             }
             new_risk_text = json.dumps(new_risk_payload, ensure_ascii=False, indent=2)
             messages = [
@@ -275,6 +287,7 @@ async def dedub_agent(state: PipelineState) -> PipelineState:
                 state["is_new_risk"] = False
                 state["description"] = _str(current_risk.get("description"))
                 state["risk_factors"] = _to_factors_list(current_risk.get("risk_factors"))
+                state["implications"] = _to_factors_list(current_risk.get("implications"))
                 return state
         except Exception as e:
             logger.warning("Ошибка LLM-дедубликации: %s", e)
@@ -284,6 +297,7 @@ async def dedub_agent(state: PipelineState) -> PipelineState:
     state["is_new_risk"] = True
     state["description"] = _str(current_risk.get("description"))
     state["risk_factors"] = _to_factors_list(current_risk.get("risk_factors"))
+    state["implications"] = _to_factors_list(current_risk.get("implications"))
     return state
 
 workflow = StateGraph(PipelineState)
@@ -375,6 +389,7 @@ async def score_review_criticality(
     risk_type: str,
     risk_description: str,
     risk_factors: str = "",
+    implications: str = "",
 ) -> Optional[int]:
     review_title = (review_title or "Без темы").strip()
     user_content = CRITICALITY_USER_TEMPLATE.format(
@@ -383,6 +398,7 @@ async def score_review_criticality(
         risk_type=(risk_type or "").strip(),
         risk_description=(risk_description or "").strip(),
         risk_factors=(risk_factors or "").strip(),
+        implications=(implications or "").strip(),
     )
     messages = [
         SystemMessage(content=CRITICALITY_SYSTEM),
@@ -404,6 +420,13 @@ async def generate_risk_for_review_async(db: AsyncSession, review: models.Review
     if not vec:
         logger.debug("У отзыва %s нет вектора в Qdrant, пропускаем", review.id)
         return None
+    # Повторная проверка: отзыв мог уже получить риск в параллельном запуске (до блокировки на API)
+    _existing = await db.execute(
+        select(models.ReviewRisk).where(models.ReviewRisk.review_id == review.id).limit(1)
+    )
+    if _existing.scalar_one_or_none():
+        logger.info("Отзыв %s уже имеет привязанный риск, пропуск (избегаем дубля)", review.id)
+        return None
 
     bank_name = review.bank.name if review.bank else "Неизвестный банк"
     settings = get_settings()
@@ -417,6 +440,11 @@ async def generate_risk_for_review_async(db: AsyncSession, review: models.Review
                 r.risk_factors
                 if isinstance(r.risk_factors, list)
                 else ([str(r.risk_factors)] if r.risk_factors else [])
+            ),
+            "implications": (
+                r.implications
+                if isinstance(r.implications, list)
+                else ([str(r.implications)] if r.implications else [])
             ),
         }
         for r in known_risks_orm
@@ -437,6 +465,7 @@ async def generate_risk_for_review_async(db: AsyncSession, review: models.Review
         "is_new_risk": False,
         "description": "",
         "risk_factors": [],
+        "implications": [],
     }
 
     logger.info("Отзыв %s — Старт пайплайна (Generator → Critic → Dedub)", review.id)
@@ -452,6 +481,8 @@ async def generate_risk_for_review_async(db: AsyncSession, review: models.Review
     description = final_state.get("description") or ""
     risk_factors_list: List[str] = final_state.get("risk_factors") or []
     risk_factors_list = [str(x).strip() for x in risk_factors_list if x and str(x).strip()]
+    implications_list: List[str] = final_state.get("implications") or []
+    implications_list = [str(x).strip() for x in implications_list if x and str(x).strip()]
     current_risk = final_state.get("current_risk") or {}
 
     review_date = review.published_at or review.scraped_at
@@ -466,25 +497,18 @@ async def generate_risk_for_review_async(db: AsyncSession, review: models.Review
             risk_type=risk_type,
             description=description,
             risk_factors=risk_factors_list or None,
+            implications=implications_list or None,
         )
         db.add(new_risk)
         await db.flush()
         resolved_risk_id = new_risk.id
-        factors_str = ", ".join(risk_factors_list) if risk_factors_list else ""
-        await asyncio.to_thread(
-            _store_risk_embedding,
-            new_risk.id,
-            risk_type,
-            description,
-            factors_str,
-        )
+        # Эмбеддинг сохраняем после commit ReviewRisk, чтобы не осталось рисков без привязки к отзыву
 
     risk_id = int(resolved_risk_id) if resolved_risk_id is not None else None
     if risk_id is None:
         logger.warning("Пайплайн не вернул risk_id для отзыва %s", review.id)
         return None
 
-    # При дубликате — слияние risk_factors в существующий риск и обновление эмбеддинга
     if not is_new_risk and risk_id is not None:
         _result = await db.execute(select(models.Risk).where(models.Risk.id == risk_id).limit(1))
         _risk_row = _result.scalar_one_or_none()
@@ -493,12 +517,24 @@ async def generate_risk_for_review_async(db: AsyncSession, review: models.Review
                 str(x).strip() for x in (_risk_row.risk_factors or []) if x and str(x).strip()
             ]
             new_factors = [f for f in risk_factors_list if f and f not in existing_factors]
+
+            existing_implications = [
+                str(x).strip() for x in (_risk_row.implications or []) if x and str(x).strip()
+            ]
+            new_implications = [i for i in implications_list if i and i not in existing_implications]
+
+            need_update = bool(new_factors or new_implications)
             if new_factors:
                 merged_factors = existing_factors + new_factors
                 _risk_row.risk_factors = merged_factors
+            if new_implications:
+                merged_implications = existing_implications + new_implications
+                _risk_row.implications = merged_implications
+
+            if need_update:
                 db.add(_risk_row)
                 await db.flush()
-                factors_str = ", ".join(merged_factors) if merged_factors else ""
+                factors_str = ", ".join(_risk_row.risk_factors or [])
                 await asyncio.to_thread(
                     _store_risk_embedding,
                     risk_id,
@@ -507,8 +543,8 @@ async def generate_risk_for_review_async(db: AsyncSession, review: models.Review
                     factors_str,
                 )
                 logger.info(
-                    "Отзыв %s — Слияние риск-факторов в риск %s: добавлено %s факторов",
-                    review.id, risk_id, len(new_factors),
+                    "Отзыв %s — Слияние в риск %s: +%s факторов, +%s последствий",
+                    review.id, risk_id, len(new_factors), len(new_implications),
                 )
 
     if existing:
@@ -518,15 +554,41 @@ async def generate_risk_for_review_async(db: AsyncSession, review: models.Review
         await db.refresh(existing)
         rr = existing
     else:
-        rr = models.ReviewRisk(
-            bank_id=review.bank_id,
-            review_id=review.id,
-            risk_id=risk_id,
-            review_date=review_date,
+        try:
+            rr = models.ReviewRisk(
+                bank_id=review.bank_id,
+                review_id=review.id,
+                risk_id=risk_id,
+                review_date=review_date,
+            )
+            db.add(rr)
+            await db.commit()
+            await db.refresh(rr)
+        except IntegrityError:
+            await db.rollback()
+            result = await db.execute(
+                select(models.ReviewRisk).where(models.ReviewRisk.review_id == review.id).limit(1)
+            )
+            rr = result.scalar_one_or_none()
+            if rr:
+                rr.risk_id = risk_id
+                rr.review_date = review_date
+                await db.commit()
+                await db.refresh(rr)
+            else:
+                logger.error("Не удалось создать/обновить ReviewRisk для отзыва %s", review.id)
+                return None
+
+    # Сохраняем эмбеддинг нового риска только после успешной привязки к отзыву (commit уже выполнен)
+    if is_new_risk:
+        factors_str = ", ".join(risk_factors_list) if risk_factors_list else ""
+        await asyncio.to_thread(
+            _store_risk_embedding,
+            risk_id,
+            (current_risk.get("risk_type") or ""),
+            description or "",
+            factors_str,
         )
-        db.add(rr)
-        await db.commit()
-        await db.refresh(rr)
 
     result = await db.execute(select(models.Risk).where(models.Risk.id == risk_id).limit(1))
     risk_row = result.scalar_one_or_none()
@@ -541,6 +603,15 @@ async def generate_risk_for_review_async(db: AsyncSession, review: models.Review
     else:
         risk_factors_for_scorer = ", ".join(risk_factors_list) if risk_factors_list else ""
 
+    if risk_row and risk_row.implications is not None:
+        implications_for_scorer = (
+            ", ".join(risk_row.implications)
+            if isinstance(risk_row.implications, list)
+            else str(risk_row.implications)
+        )
+    else:
+        implications_for_scorer = ", ".join(implications_list) if implications_list else ""
+
     logger.info("Отзыв %s — Оценка критичности отзыва (1–5)", review.id)
     score = await score_review_criticality(
         review_title=review.title,
@@ -548,6 +619,7 @@ async def generate_risk_for_review_async(db: AsyncSession, review: models.Review
         risk_type=risk_type_str,
         risk_description=risk_desc,
         risk_factors=risk_factors_for_scorer,
+        implications=implications_for_scorer,
     )
     if score is not None:
         review.criticality_score = score

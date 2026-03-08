@@ -103,6 +103,18 @@ def init_db() -> None:
         insp = reflection.Inspector.from_engine(engine)
         if "risks" in insp.get_table_names():
             cols = [c["name"] for c in insp.get_columns("risks")]
+            if "implications" not in cols:
+                implications_type = "JSONB" if engine.dialect.name == "postgresql" else "TEXT"
+                with engine.connect() as conn:
+                    conn.execute(text(f"ALTER TABLE risks ADD COLUMN implications {implications_type}"))
+                    conn.commit()
+    except Exception:
+        pass
+
+    try:
+        insp = reflection.Inspector.from_engine(engine)
+        if "risks" in insp.get_table_names():
+            cols = [c["name"] for c in insp.get_columns("risks")]
             if "severity" in cols:
                 with engine.connect() as conn:
                     conn.execute(text("ALTER TABLE risks DROP COLUMN severity"))

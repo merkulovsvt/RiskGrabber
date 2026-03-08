@@ -863,6 +863,27 @@
     </div>
 
     <div class="card" style="margin-bottom: 24px;">
+      <h3>🔥 Горячие риски</h3>
+      <p style="font-size: 12px; color: #666; margin: -8px 0 12px 0;">Топ рисков по сумме критичности отзывов (1–5) за интервал — без LLM. Группировка по дням, неделям, месяцам или годам.</p>
+      <div class="control-group" style="margin-bottom: 12px; flex-wrap: wrap; gap: 12px;">
+        <label for="hotRisksBankFilter">Банк:</label>
+        <select id="hotRisksBankFilter" style="padding: 10px 14px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 14px; min-width: 220px;">
+          <option value="">Все банки</option>
+        </select>
+        <label for="hotRisksGroupBy">Группировка:</label>
+        <select id="hotRisksGroupBy" style="padding: 10px 14px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 14px;">
+          <option value="day">По дням</option>
+          <option value="week">По неделям</option>
+          <option value="month" selected>По месяцам</option>
+          <option value="year">По годам</option>
+        </select>
+      </div>
+      <div class="chart-container" style="height: 380px; width: 100%;">
+        <canvas id="hotRisksChart"></canvas>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom: 24px;">
       <h3>🏆 Рейтинг банков</h3>
       <p style="font-size: 12px; color: #666; margin-bottom: 10px;">Взвешенная сумма рисков по степени серьёзности за период, нормализованная по числу отзывов.</p>
       <div id="bankScoresRanking" style="overflow-x: auto; min-height: 80px;">
@@ -922,6 +943,7 @@
     let sentimentChart = null;
     let reviewsOverTimeChart = null;
     let riskTrendsChart = null;
+    let hotRisksChart = null;
     let reviewCriticalityChart = null;
     let vectorMapChart = null;
 
@@ -1237,6 +1259,89 @@
       } catch (e) { console.error('loadRiskTrends:', e); }
     }
 
+    async function loadHotRisks() {
+      try {
+        const params = buildAnalyticsParams();
+        const bankId = (document.getElementById('hotRisksBankFilter') || {}).value || '';
+        if (bankId) params.set('bank_id', bankId);
+        const groupBy = (document.getElementById('hotRisksGroupBy') || {}).value || 'month';
+        params.set('group_by', groupBy);
+        params.set('limit_risks', '10');
+        const resp = await fetch('/analytics/hot-risks?' + params.toString());
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const intervals = data.intervals || [];
+        const riskMeta = data.risk_meta || [];
+        const el = document.getElementById('hotRisksChart');
+        if (!el) return;
+        if (hotRisksChart) { hotRisksChart.destroy(); hotRisksChart = null; }
+        if (intervals.length === 0 || riskMeta.length === 0) return;
+        // Суммируем hot_score по всем интервалам для каждого риска
+        const totalByRisk = {};
+        const riskMetaById = {};
+        riskMeta.forEach(function(r) { riskMetaById[r.id] = r; totalByRisk[r.id] = 0; });
+        intervals.forEach(function(b) {
+          (b.hot_risks || []).forEach(function(h) {
+            totalByRisk[h.risk_id] = (totalByRisk[h.risk_id] || 0) + (h.hot_score || 0);
+          });
+        });
+        const sortedIds = Object.keys(totalByRisk)
+          .map(function(id) { return parseInt(id, 10); })
+          .filter(function(id) { return totalByRisk[id] > 0; })
+          .sort(function(a, b) { return totalByRisk[b] - totalByRisk[a]; });
+        if (sortedIds.length === 0) return;
+        const labels = sortedIds.map(function(id) {
+          var r = riskMetaById[id];
+          return (r && (r.description || r.risk_type)) ? (r.description || r.risk_type).slice(0, 50) : 'Риск #' + id;
+        });
+        const values = sortedIds.map(function(id) { return Math.round(totalByRisk[id] * 10) / 10; });
+        const oneColor = 'rgba(231, 76, 60, 0.85)';
+        el.style.cursor = 'pointer';
+        hotRisksChart = new Chart(el, {
+          type: 'bar',
+          data: {
+            labels: labels,
+            datasets: [{
+              label: 'Сумма критичности за период',
+              data: values,
+              backgroundColor: oneColor,
+              borderColor: 'rgb(192, 57, 43)',
+              borderWidth: 1
+            }]
+          },
+          options: {
+            indexAxis: 'y',
+            responsive: true,
+            maintainAspectRatio: false,
+            onClick: function(evt, elements, chart) {
+              if (elements.length && sortedIds[elements[0].index] != null) {
+                var riskId = sortedIds[elements[0].index];
+                var title = labels[elements[0].index];
+                showRiskReviews(riskId, title);
+              }
+            },
+            plugins: {
+              legend: { display: false },
+              tooltip: {
+                callbacks: {
+                  label: function(ctx) { return 'Сумма критичности: ' + ctx.raw + ' · клик: отзывы'; }
+                }
+              }
+            },
+            scales: {
+              x: {
+                beginAtZero: true,
+                title: { display: true, text: 'Сумма критичности (1–5 по отзывам)' }
+              },
+              y: {
+                ticks: { maxRotation: 0, autoSkip: false, font: { size: 11 } }
+              }
+            }
+          }
+        });
+      } catch (e) { console.error('loadHotRisks:', e); }
+    }
+
     async function loadRiskMatrix() {
       try {
         const params = buildAnalyticsParams();
@@ -1521,7 +1626,7 @@
       loadReviewsOverTime();
 
       // Пересчёт размеров Chart.js после layout (rAF + небольшая задержка для полной отрисовки)
-      const charts = [reviewsByBankChart, ratingByBankChart, sentimentChart, reviewsOverTimeChart, riskTrendsChart, reviewCriticalityChart];
+      const charts = [reviewsByBankChart, ratingByBankChart, sentimentChart, reviewsOverTimeChart, riskTrendsChart, hotRisksChart, reviewCriticalityChart];
       const doResize = () => charts.forEach(ch => { if (ch && typeof ch.resize === 'function') ch.resize(); });
       requestAnimationFrame(doResize);
       setTimeout(doResize, 150);
@@ -1555,6 +1660,20 @@
         if (!riskTrendsBankFilter.value) riskTrendsBankFilter.value = '';
       }
       loadRiskTrends();
+      const hotRisksBankFilter = document.getElementById('hotRisksBankFilter');
+      if (hotRisksBankFilter) {
+        const curHot = hotRisksBankFilter.value;
+        hotRisksBankFilter.innerHTML = '<option value="">Все банки</option>';
+        banks.forEach(b => {
+          const opt = document.createElement('option');
+          opt.value = String(b.bank.id);
+          opt.textContent = b.bank.name;
+          if (String(b.bank.id) === curHot) opt.selected = true;
+          hotRisksBankFilter.appendChild(opt);
+        });
+        if (!hotRisksBankFilter.value) hotRisksBankFilter.value = '';
+      }
+      loadHotRisks();
       loadRiskMatrix();
       loadReviewCriticality();
       } finally {
@@ -1825,9 +1944,15 @@
         cardHtml += '<div style="margin-bottom: 10px;"><strong style="color: #444;">Описание:</strong> <span style="color: #333;">' + escapeHtml(risk.description || '—') + '</span></div>';
         var factors = risk.risk_factors;
         if (Array.isArray(factors) && factors.length > 0) {
-          cardHtml += '<div><strong style="color: #444;">Риск-факторы:</strong><ul style="margin: 4px 0 0 18px; padding: 0;">' + factors.map(function(f) { return '<li>' + escapeHtml(String(f)) + '</li>'; }).join('') + '</ul></div>';
+          cardHtml += '<div style="margin-bottom: 10px;"><strong style="color: #444;">Риск-факторы:</strong><ul style="margin: 4px 0 0 18px; padding: 0;">' + factors.map(function(f) { return '<li>' + escapeHtml(String(f)) + '</li>'; }).join('') + '</ul></div>';
         } else {
-          cardHtml += '<div><strong style="color: #444;">Риск-факторы:</strong> —</div>';
+          cardHtml += '<div style="margin-bottom: 10px;"><strong style="color: #444;">Риск-факторы:</strong> —</div>';
+        }
+        var impl = risk.implications;
+        if (Array.isArray(impl) && impl.length > 0) {
+          cardHtml += '<div><strong style="color: #444;">Последствия:</strong><ul style="margin: 4px 0 0 18px; padding: 0;">' + impl.map(function(i) { return '<li>' + escapeHtml(String(i)) + '</li>'; }).join('') + '</ul></div>';
+        } else {
+          cardHtml += '<div><strong style="color: #444;">Последствия:</strong> —</div>';
         }
         cardHtml += '</div>';
         cardEl.innerHTML = cardHtml;
@@ -1948,26 +2073,40 @@
           : 'Auto: необработанных отзывов нет. Следующая проверка через 60 с.', true);
       } catch (e) {
         console.error(e);
-        setStatus('Auto: ошибка — ' + (e.message || 'см. консоль'));
+        setStatus('Auto: ошибка — ' + (e.message || 'см. консоль') + '. Auto выключен.');
+        stopAutoProcess();
+        const toggle = document.getElementById('autoProcessToggle');
+        if (toggle) toggle.checked = false;
       }
     }
 
     async function startAutoProcess() {
       if (autoProcessIntervalId) return;
       setAutoProcessButtonsEnabled(false);
-      await runOneAutoCycle();
-      autoProcessIntervalId = setInterval(async () => {
+
+      async function loop() {
         if (!document.getElementById('autoProcessToggle').checked) {
           stopAutoProcess();
           return;
         }
         await runOneAutoCycle();
-      }, 60000);
+        if (!document.getElementById('autoProcessToggle').checked) {
+          stopAutoProcess();
+          return;
+        }
+        autoProcessIntervalId = setTimeout(loop, 60000);
+      }
+      await runOneAutoCycle();
+      if (document.getElementById('autoProcessToggle').checked) {
+        autoProcessIntervalId = setTimeout(loop, 60000);
+      } else {
+        setAutoProcessButtonsEnabled(true);
+      }
     }
 
     function stopAutoProcess() {
       if (autoProcessIntervalId) {
-        clearInterval(autoProcessIntervalId);
+        clearTimeout(autoProcessIntervalId);
         autoProcessIntervalId = null;
       }
       setAutoProcessButtonsEnabled(true);
@@ -1995,8 +2134,8 @@
 
     async function generateRisks() {
       try {
-        setStatus('Генерация рисков (LLM): запуск (макс. 10 отзывов)...', true);
-        const data = await consumeStream('/stream/risks/generate?max_reviews=10', {
+        setStatus('Генерация рисков (LLM): запуск, обрабатываются все отзывы без лимита...', true);
+        const data = await consumeStream('/stream/risks/generate', {
           onProgress: (d) => {
             if (d != null && typeof d.risks_created === 'number') loadRisksBlockOnly();
           }
@@ -2062,6 +2201,10 @@
     if (rotBankEl) rotBankEl.addEventListener('change', function() { loadReviewsOverTime(); });
     var rotGroupEl = document.getElementById('reviewsOverTimeGroupBy');
     if (rotGroupEl) rotGroupEl.addEventListener('change', function() { loadReviewsOverTime(); });
+    var hotRisksBankEl = document.getElementById('hotRisksBankFilter');
+    if (hotRisksBankEl) hotRisksBankEl.addEventListener('change', function() { loadHotRisks(); });
+    var hotRisksGroupEl = document.getElementById('hotRisksGroupBy');
+    if (hotRisksGroupEl) hotRisksGroupEl.addEventListener('change', function() { loadHotRisks(); });
     document.getElementById('risksDateFrom').addEventListener('change', function() {
       schedulePeriodRefresh();
     });
@@ -2069,9 +2212,18 @@
       schedulePeriodRefresh();
     });
 
-    (async function init() {
-      await loadDashboardData();
-      await loadVectorMap();
+    (function init() {
+      setStatus('Загрузка дашборда…', true);
+      loadDashboardData().then(function() {
+        setStatus('Дашборд загружен.');
+      }).catch(function(e) {
+        setStatus('Ошибка загрузки дашборда: ' + (e && e.message || 'см. консоль'));
+      });
+      loadVectorMap().then(function() {
+        if (document.querySelector('.status-line') && document.querySelector('.status-line').textContent === 'Загрузка дашборда…') setStatus('Карта векторов загружена.');
+      }).catch(function(e) {
+        setStatus('Ошибка загрузки карты векторов: ' + (e && e.message || 'см. консоль'));
+      });
     })();
   </script>
 </body>

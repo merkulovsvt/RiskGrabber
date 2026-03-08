@@ -12,7 +12,7 @@ import umap
 import numpy as np
 from fastapi import FastAPI, Depends, Query, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
-from sqlalchemy import case, distinct, func, select
+from sqlalchemy import case, delete, distinct, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session, selectinload
 from sklearn.decomposition import PCA
@@ -29,6 +29,9 @@ from ..llm.risk_detection import generate_risk_for_review_async
 from ..llm.vector_store import sync_all_reviews_to_qdrant, sync_all_reviews_to_qdrant_async, get_vectors_by_review_ids_async
 
 logger = logging.getLogger(__name__)
+
+# Блокировка: только один запуск генерации рисков одновременно (избегаем дублей при двойном клике / двух вкладках)
+_risks_generation_lock = asyncio.Lock()
 
 # Агрегированный показатель рисков: байесовское среднее (1–5)
 BAYESIAN_PRIOR_MEAN = 3.0
@@ -69,6 +72,7 @@ def on_startup() -> None:
         "sentence_transformers",
         "sentence_transformers.SentenceTransformer",
         "huggingface_hub.utils._http",
+        "asyncio",
     ):
         logging.getLogger(noisy_logger).setLevel(logging.WARNING)
     logger.info("Logging level set to %s (debug=%s)", logging.getLevelName(log_level), settings.debug)
@@ -343,40 +347,79 @@ async def get_risk_reviews(
 @app.post("/risks/generate")
 async def generate_risks_endpoint(
     max_reviews: int = Query(
-        default=10,
-        ge=1,
-        le=1000,
-        description="Максимальное количество отрицательных отзывов для генерации рисков",
+        default=0,
+        ge=0,
+        le=100_000,
+        description="0 = без лимита (обработать все отзывы)",
     ),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    from sqlalchemy import exists
-    subq = select(models.ReviewRisk).where(models.ReviewRisk.review_id == models.Review.id)
-    review_date = func.coalesce(models.Review.published_at, models.Review.scraped_at)
-    stmt = (
-        select(models.Review)
-        .where(
-            models.Review.sentiment == "negative",
-            models.Review.vector_in_qdrant.is_(True),
-            ~exists(subq).correlate(models.Review),
-        )
-        .order_by(review_date.asc())
-        .limit(max_reviews)
-        .options(selectinload(models.Review.bank))
-    )
+    async with _risks_generation_lock:
+        try:
+            got = (await db.execute(
+                text("SELECT pg_try_advisory_lock(:id)"),
+                {"id": _RISKS_GENERATION_ADVISORY_LOCK_ID},
+            )).scalar()
+        except Exception:
+            got = False
+        if not got:
+            raise HTTPException(
+                status_code=409,
+                detail="Генерация рисков уже выполняется в другом запросе или процессе. Дождитесь завершения.",
+            )
+        try:
+            from sqlalchemy import exists
+            subq = (
+                select(models.ReviewRisk)
+                .where(models.ReviewRisk.review_id == models.Review.id)
+                .correlate(models.Review)
+            )
+            review_date = func.coalesce(models.Review.published_at, models.Review.scraped_at)
+            stmt = (
+                select(models.Review)
+                .where(
+                    models.Review.sentiment == "negative",
+                    models.Review.vector_in_qdrant.is_(True),
+                    ~exists(subq),
+                )
+                .order_by(review_date.asc(), models.Review.external_id.asc().nulls_last())
+                .options(selectinload(models.Review.bank))
+            )
+            if max_reviews > 0:
+                stmt = stmt.limit(max_reviews)
+            result = await db.execute(stmt)
+            reviews = result.scalars().all()
+            if not reviews:
+                return {"reviews_processed": 0, "risks_created": 0}
+            total_risks = 0
+            for review in reviews:
+                risk = await generate_risk_for_review_async(db, review)
+                if risk:
+                    total_risks += 1
+            return {
+                "reviews_processed": len(reviews),
+                "risks_created": total_risks,
+            }
+        finally:
+            try:
+                await db.execute(
+                    text("SELECT pg_advisory_unlock(:id)"),
+                    {"id": _RISKS_GENERATION_ADVISORY_LOCK_ID},
+                )
+            except Exception:
+                pass
+
+
+@app.delete("/risks/orphans")
+async def delete_orphan_risks(db: AsyncSession = Depends(get_db)) -> dict:
+    """Удаляет риски, не привязанные ни к одному отзыву (review_risks). Исправляет рассинхрон risks vs review_risks."""
+    subq = select(models.ReviewRisk.risk_id).distinct()
+    stmt = delete(models.Risk).where(~models.Risk.id.in_(subq))
     result = await db.execute(stmt)
-    reviews = result.scalars().all()
-    if not reviews:
-        return {"reviews_processed": 0, "risks_created": 0}
-    total_risks = 0
-    for review in reviews:
-        risk = await generate_risk_for_review_async(db, review)
-        if risk:
-            total_risks += 1
-    return {
-        "reviews_processed": len(reviews),
-        "risks_created": total_risks,
-    }
+    await db.commit()
+    deleted = result.rowcount
+    logger.info("Удалено осиротевших рисков: %s", deleted)
+    return {"deleted": deleted}
 
 
 def _progress_queue(q: queue.Queue):
@@ -393,58 +436,92 @@ def _progress_asyncio_queue(aq: asyncio.Queue):
     return progress
 
 
+# Идентификатор блокировки в БД (PostgreSQL advisory lock) — один процесс на всю систему
+_RISKS_GENERATION_ADVISORY_LOCK_ID = 0x7F0E_0001
+
+
 async def _stream_risks_run_async(aq: asyncio.Queue, max_reviews: int) -> None:
     """Генерация рисков с отправкой прогресса в asyncio.Queue (для работы в основном event loop)."""
     from sqlalchemy import exists
     async with AsyncSessionLocal() as db:
-        subq = select(models.ReviewRisk).where(models.ReviewRisk.review_id == models.Review.id)
-        review_date = func.coalesce(models.Review.published_at, models.Review.scraped_at)
-        stmt = (
-            select(models.Review)
-            .where(
-                models.Review.sentiment == "negative",
-                models.Review.vector_in_qdrant.is_(True),
-                ~exists(subq).correlate(models.Review),
-            )
-            .order_by(review_date.asc())
-            .limit(max_reviews)
-            .options(selectinload(models.Review.bank))
-        )
-        result = await db.execute(stmt)
-        reviews = result.scalars().all()
-        if not reviews:
-            msg = "Нет отзывов для генерации рисков. Нужны отзывы: сентимент «негативный», вектор в Qdrant, без присвоенного риска."
+        try:
+            # Межпроцессная блокировка через БД (работает при нескольких воркерах uvicorn)
+            try:
+                got = (await db.execute(text("SELECT pg_try_advisory_lock(:id)"), {"id": _RISKS_GENERATION_ADVISORY_LOCK_ID})).scalar()
+            except Exception:
+                got = False
+            if not got:
+                await aq.put({
+                    "done": True,
+                    "message": "Генерация рисков уже выполняется в другом запросе или процессе. Дождитесь завершения.",
+                    "result": {"reviews_processed": 0, "risks_created": 0},
+                })
+                return
+            try:
+                subq = (
+                    select(models.ReviewRisk)
+                    .where(models.ReviewRisk.review_id == models.Review.id)
+                    .correlate(models.Review)
+                )
+                review_date = func.coalesce(models.Review.published_at, models.Review.scraped_at)
+                stmt = (
+                    select(models.Review)
+                    .where(
+                        models.Review.sentiment == "negative",
+                        models.Review.vector_in_qdrant.is_(True),
+                        ~exists(subq),
+                    )
+                    .order_by(review_date.asc(), models.Review.external_id.asc().nulls_last())
+                    .options(selectinload(models.Review.bank))
+                )
+                if max_reviews > 0:
+                    stmt = stmt.limit(max_reviews)
+                result = await db.execute(stmt)
+                reviews = result.scalars().all()
+                if not reviews:
+                    msg = "Нет отзывов для генерации рисков. Нужны отзывы: сентимент «негативный», вектор в Qdrant, без присвоенного риска."
+                    await aq.put({
+                        "done": True,
+                        "message": msg,
+                        "result": {"reviews_processed": 0, "risks_created": 0, "message": msg},
+                    })
+                    return
+                total_risks = 0
+                for i, review in enumerate(reviews):
+                    await aq.put({
+                        "stage": "llm",
+                        "message": f"LLM: отзыв {i + 1} из {len(reviews)}...",
+                        "current": i + 1,
+                        "total": len(reviews),
+                        "risks_created": total_risks,
+                    })
+                    risk = await generate_risk_for_review_async(db, review)
+                    if risk:
+                        total_risks += 1
+                        await aq.put({
+                            "stage": "llm",
+                            "message": f"Создан риск. Всего: {total_risks}",
+                            "risks_created": total_risks,
+                        })
+                await aq.put({
+                    "done": True,
+                    "message": f"Готово. Создано рисков: {total_risks}, обработано отзывов: {len(reviews)}.",
+                    "result": {
+                        "reviews_processed": len(reviews),
+                        "risks_created": total_risks,
+                    },
+                })
+            finally:
+                try:
+                    await db.execute(text("SELECT pg_advisory_unlock(:id)"), {"id": _RISKS_GENERATION_ADVISORY_LOCK_ID})
+                except Exception:
+                    pass
+        except Exception as e:
             await aq.put({
                 "done": True,
-                "message": msg,
-                "result": {"reviews_processed": 0, "risks_created": 0, "message": msg},
+                "message": f"Ошибка: {e!s}",
+                "result": {"reviews_processed": 0, "risks_created": 0},
             })
-            return
-        total_risks = 0
-        for i, review in enumerate(reviews):
-            await aq.put({
-                "stage": "llm",
-                "message": f"LLM: отзыв {i + 1} из {len(reviews)}...",
-                "current": i + 1,
-                "total": len(reviews),
-                "risks_created": total_risks,
-            })
-            risk = await generate_risk_for_review_async(db, review)
-            if risk:
-                total_risks += 1
-                await aq.put({
-                    "stage": "llm",
-                    "message": f"Создан риск. Всего: {total_risks}",
-                    "risks_created": total_risks,
-                })
-        await aq.put({
-            "done": True,
-            "message": f"Готово. Создано рисков: {total_risks}, обработано отзывов: {len(reviews)}.",
-            "result": {
-                "reviews_processed": len(reviews),
-                "risks_created": total_risks,
-            },
-        })
 
 
 async def _stream_from_queue(q: queue.Queue):
@@ -538,7 +615,7 @@ async def stream_pipeline_run(
 
 @app.get("/stream/risks/generate")
 async def stream_risks_generate(
-    max_reviews: int = Query(default=10, ge=1, le=1000),
+    max_reviews: int = Query(default=0, ge=0, le=100_000, description="0 = без лимита (обработать все отзывы)"),
 ) -> StreamingResponse:
     """
     SSE: генерация рисков через LLM с потоком прогресса по отзывам.
@@ -548,15 +625,16 @@ async def stream_risks_generate(
     await aq.put({"message": "Поиск отрицательных отзывов без риска...", "stage": "start"})
 
     async def run_and_feed():
-        try:
-            await _stream_risks_run_async(aq, max_reviews)
-        except Exception as e:
-            logger.exception("Ошибка в stream/risks/generate: %s", e)
-            await aq.put({
-                "done": True,
-                "message": f"Ошибка: {e!s}",
-                "result": {"reviews_processed": 0, "risks_created": 0},
-            })
+        async with _risks_generation_lock:
+            try:
+                await _stream_risks_run_async(aq, max_reviews)
+            except Exception as e:
+                logger.exception("Ошибка в stream/risks/generate: %s", e)
+                await aq.put({
+                    "done": True,
+                    "message": f"Ошибка: {e!s}",
+                    "result": {"reviews_processed": 0, "risks_created": 0},
+                })
 
     asyncio.create_task(run_and_feed())
     return StreamingResponse(
@@ -718,7 +796,9 @@ def analytics_reviews_over_time(
 
 
 def _bucket_start(d: dt.datetime, group_by: str) -> dt.datetime:
-    """Return start of day, week or month for grouping."""
+    """Return start of day, week, month or year for grouping."""
+    if group_by == "year":
+        return d.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
     if group_by == "month":
         return d.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     if group_by == "week":
@@ -807,6 +887,94 @@ def analytics_risk_trends(
 
     risk_meta = [schemas.RiskBase.model_validate(risk_meta_by_id[rid]) for rid in top_risk_ids if rid in risk_meta_by_id]
     return schemas.RiskTrendsResponse(intervals=intervals, risk_meta=risk_meta)
+
+
+@app.get("/analytics/hot-risks", response_model=schemas.HotRisksResponse)
+def analytics_hot_risks(
+    date_from: Optional[str] = Query(None, description="Начало периода (YYYY-MM-DD)"),
+    date_to: Optional[str] = Query(None, description="Конец периода (YYYY-MM-DD)"),
+    bank_id: Optional[int] = Query(None, description="Фильтр по банку (ID); не задан — все банки"),
+    group_by: str = Query("month", description="Интервал: day, week, month, year"),
+    limit_risks: int = Query(10, ge=1, le=30, description="Топ N горячих рисков в каждом интервале"),
+    db: Session = Depends(get_db_sync),
+) -> schemas.HotRisksResponse:
+    """Горячие риски по интервалам: метрика = сумма критичности отзывов (1–5) за интервал. Без LLM."""
+    risk_date = func.coalesce(models.ReviewRisk.review_date, models.ReviewRisk.created_at)
+    reviews_date_min = db.query(func.min(risk_date)).select_from(models.ReviewRisk).scalar()
+    reviews_date_max = db.query(func.max(risk_date)).select_from(models.ReviewRisk).scalar()
+    since, until = _parse_dashboard_dates(date_from, date_to, reviews_date_min, reviews_date_max)
+
+    bucket_key = "year" if group_by == "year" else ("month" if group_by == "month" else ("week" if group_by == "week" else "day"))
+
+    q = (
+        db.query(models.ReviewRisk, models.Risk, models.Review)
+        .join(models.Risk, models.ReviewRisk.risk_id == models.Risk.id)
+        .join(models.Review, models.ReviewRisk.review_id == models.Review.id)
+        .filter(risk_date >= since, risk_date <= until)
+    )
+    if bank_id is not None:
+        q = q.filter(models.ReviewRisk.bank_id == bank_id)
+    rows = q.all()
+
+    # by_bucket[bucket_start][risk_id] = {"count": int, "sum_crit": float}
+    by_bucket: Dict[dt.datetime, Dict[int, Dict]] = {}
+    risk_meta_by_id: Dict[int, models.Risk] = {}
+    for rr, risk, review in rows:
+        risk_meta_by_id[risk.id] = risk
+        t = rr.review_date or rr.created_at
+        if t is None:
+            continue
+        start = _bucket_start(t, bucket_key)
+        by_bucket.setdefault(start, {})
+        rec = by_bucket[start].setdefault(risk.id, {"count": 0, "sum_crit": 0.0})
+        rec["count"] += 1
+        rec["sum_crit"] += (review.criticality_score or 0)
+
+    # Top risk_ids by total hot_score across all buckets
+    total_hot: Dict[int, float] = {}
+    for buck_data in by_bucket.values():
+        for rid, rec in buck_data.items():
+            total_hot[rid] = total_hot.get(rid, 0) + rec["sum_crit"]
+    top_risk_ids = sorted(total_hot.keys(), key=lambda x: -total_hot[x])[: limit_risks * 2]
+    top_risk_ids = [r for r in top_risk_ids if r in risk_meta_by_id][:limit_risks]
+
+    intervals_out: List[schemas.HotRisksBucket] = []
+    for start in sorted(by_bucket.keys()):
+        if bucket_key == "year":
+            end = start.replace(year=start.year + 1)
+        elif bucket_key == "month":
+            end = start.replace(month=start.month + 1) if start.month < 12 else start.replace(year=start.year + 1, month=1)
+        elif bucket_key == "week":
+            end = start + dt.timedelta(days=7)
+        else:
+            end = start + dt.timedelta(days=1)
+        buck_data = by_bucket[start]
+        hot_list = []
+        for rid in top_risk_ids:
+            rec = buck_data.get(rid, {"count": 0, "sum_crit": 0.0})
+            hot_list.append(
+                schemas.HotRiskItem(
+                    risk_id=rid,
+                    risk_type=risk_meta_by_id[rid].risk_type,
+                    reviews_count=rec["count"],
+                    hot_score=round(rec["sum_crit"], 2),
+                    avg_criticality=round(rec["sum_crit"] / rec["count"], 2) if rec["count"] else None,
+                )
+            )
+        hot_list.sort(key=lambda x: -x.hot_score)
+        intervals_out.append(schemas.HotRisksBucket(start=start, end=end, hot_risks=hot_list))
+
+    risk_meta = [schemas.RiskBase.model_validate(risk_meta_by_id[rid]) for rid in top_risk_ids if rid in risk_meta_by_id]
+    bank_name: Optional[str] = None
+    if bank_id is not None:
+        bank = db.query(models.Bank).filter(models.Bank.id == bank_id).first()
+        bank_name = bank.name if bank else None
+    return schemas.HotRisksResponse(
+        intervals=intervals_out,
+        risk_meta=risk_meta,
+        bank_id=bank_id,
+        bank_name=bank_name,
+    )
 
 
 @app.get("/analytics/bank-risk-trends", response_model=schemas.BankRiskTrendsResponse)

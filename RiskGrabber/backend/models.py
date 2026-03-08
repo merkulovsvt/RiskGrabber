@@ -77,7 +77,8 @@ class Risk(Base):
     id: int = Column(Integer, primary_key=True, index=True)
     risk_type: str = Column(String(64), nullable=False, default="unspecified")
     description: str = Column(Text, nullable=False, default="")
-    risk_factors: Optional[List[str]] = Column(JSON, nullable=True)  # список строк в PostgreSQL (JSONB)
+    risk_factors: Optional[List[str]] = Column(JSON, nullable=True)
+    implications: Optional[List[str]] = Column(JSON, nullable=True)
 
     review_risks = relationship(
         "ReviewRisk", back_populates="risk", cascade="all, delete-orphan"
