@@ -26,7 +26,7 @@
 
 ## Схема и устройство системы
 
-![Архитектура RiskGrabber](architecture-diagram.svg)
+![Архитектура RiskGrabber](architecture-diagram.png)
 
 Ниже приведено описание компонентов и процессов, отражённых на схеме.
 

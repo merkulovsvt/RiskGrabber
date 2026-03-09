@@ -34,6 +34,9 @@ from .prompts import (
     DEDUB_SYSTEM,
     DEDUB_USER_TEMPLATE,
     DedubResponse,
+    CONSOLIDATE_LIST_SYSTEM_TEMPLATE,
+    CONSOLIDATE_LIST_USER_TEMPLATE,
+    ConsolidateListResponse,
     CRITICALITY_SYSTEM,
     CRITICALITY_USER_TEMPLATE,
     ReviewCriticalityResponse,
@@ -43,6 +46,45 @@ from ..backend import models
 logger = logging.getLogger(__name__)
 
 settings = get_settings()
+
+
+async def consolidate_risk_list(
+    items: List[str],
+    kind: Literal["risk_factors", "implications"],
+    max_items: int = 5,
+    review_title: str = "",
+    review_text: str = "",
+    risk_type: str = "",
+    risk_description: str = "",
+) -> List[str]:
+    """Объединяет список формулировок через LLM с контекстом отзыва и риска; оставляет не более max_items самых подходящих."""
+    items = [str(x).strip() for x in items if x and str(x).strip()]
+    if not items:
+        return []
+    if len(items) <= max_items:
+        return items
+    list_type = "факторы риска (причины/уязвимости)" if kind == "risk_factors" else "последствия для банка"
+    review_title_s = (review_title or "").strip() or "—"
+    review_text_s = (review_text or "").strip() or "—"
+    try:
+        system_content = CONSOLIDATE_LIST_SYSTEM_TEMPLATE.format(list_type=list_type)
+        messages = [
+            SystemMessage(content=system_content),
+            HumanMessage(content=CONSOLIDATE_LIST_USER_TEMPLATE.format(
+                list_type=list_type,
+                review_title=review_title_s,
+                review_text=review_text_s,
+                risk_type=(risk_type or "").strip() or "—",
+                risk_description=(risk_description or "").strip() or "—",
+                items_json=json.dumps(items, ensure_ascii=False),
+            )),
+        ]
+        response: ConsolidateListResponse = await structured_consolidate_llm.ainvoke(messages)
+        out = [str(x).strip() for x in (response.items or []) if x and str(x).strip()]
+        return out[:max_items]
+    except Exception as e:
+        logger.warning("Ошибка консолидации списка %s: %s, возвращаем обрезку по первым %s", kind, e, max_items)
+        return items[:max_items]
 
 
 class PipelineState(TypedDict, total=False):
@@ -83,6 +125,7 @@ llm = ChatOpenAI(
 structured_generator_llm = llm.with_structured_output(GeneratorRisk)
 structured_critic_llm = llm.with_structured_output(CriticResponse)
 structured_dedub_llm = llm.with_structured_output(DedubResponse)
+structured_consolidate_llm = llm.with_structured_output(ConsolidateListResponse)
 structured_criticality_llm = llm.with_structured_output(ReviewCriticalityResponse)
 
 
@@ -118,12 +161,16 @@ async def generator_agent(state: PipelineState) -> PipelineState:
                 state["current_risk"] = None
             return state
 
+        max_f = settings.generator_max_risk_factors
+        max_i = settings.generator_max_implications
+        factors = [str(x).strip() for x in (result.risk_factor or [])[:max_f] if x and str(x).strip()]
+        implications = [str(x).strip() for x in (result.implications or [])[:max_i] if x and str(x).strip()]
         state["current_risk"] = {
             "risk_id": None,
             "risk_type": result.risk_type,
             "description": result.description,
-            "risk_factors": result.risk_factor,
-            "implications": result.implications,
+            "risk_factors": factors,
+            "implications": implications,
         }
         logger.info(
             "Отзыв %s — Генератор: получен риск, вид=%s, длина описания=%s",
@@ -498,8 +545,8 @@ async def generate_risk_for_review_async(db: AsyncSession, review: models.Review
         new_risk = models.Risk(
             risk_type=risk_type,
             description=description,
-            risk_factors=risk_factors_list or None,
-            implications=implications_list or None,
+            risk_factors=risk_factors_list[: settings.max_risk_factors] or None,
+            implications=implications_list[: settings.max_implications] or None,
         )
         db.add(new_risk)
         await db.flush()
@@ -526,11 +573,29 @@ async def generate_risk_for_review_async(db: AsyncSession, review: models.Review
             new_implications = [i for i in implications_list if i and i not in existing_implications]
 
             need_update = bool(new_factors or new_implications)
+            max_f = settings.max_risk_factors
+            max_i = settings.max_implications
+            review_title_str = (review.title or "").strip()
+            review_text_str = (review.text or "").strip()
+            risk_type_str = _risk_row.risk_type or ""
+            risk_desc_str = _risk_row.description or ""
             if new_factors:
                 merged_factors = existing_factors + new_factors
+                if len(merged_factors) > max_f:
+                    merged_factors = await consolidate_risk_list(
+                        merged_factors, "risk_factors", max_items=max_f,
+                        review_title=review_title_str, review_text=review_text_str,
+                        risk_type=risk_type_str, risk_description=risk_desc_str,
+                    )
                 _risk_row.risk_factors = merged_factors
             if new_implications:
                 merged_implications = existing_implications + new_implications
+                if len(merged_implications) > max_i:
+                    merged_implications = await consolidate_risk_list(
+                        merged_implications, "implications", max_items=max_i,
+                        review_title=review_title_str, review_text=review_text_str,
+                        risk_type=risk_type_str, risk_description=risk_desc_str,
+                    )
                 _risk_row.implications = merged_implications
 
             if need_update:

@@ -111,6 +111,41 @@ class Settings(BaseSettings):
         env="LLM_CRITIC_MAX_ITER",
         description="Максимум возвратов в генератор от критика (не более N заходов)",
     )
+    generator_max_risk_factors: int = Field(
+        default=3,
+        ge=1,
+        le=20,
+        env="GENERATOR_MAX_RISK_FACTORS",
+        description="Макс. число факторов риска на выходе генератора",
+    )
+    generator_max_implications: int = Field(
+        default=3,
+        ge=1,
+        le=20,
+        env="GENERATOR_MAX_IMPLICATIONS",
+        description="Макс. число последствий на выходе генератора",
+    )
+    max_risk_factors: int = Field(
+        default=5,
+        ge=1,
+        le=20,
+        env="MAX_RISK_FACTORS",
+        description="Макс. число факторов после консолидации и при записи в БД",
+    )
+    max_implications: int = Field(
+        default=5,
+        ge=1,
+        le=20,
+        env="MAX_IMPLICATIONS",
+        description="Макс. число последствий после консолидации и при записи в БД",
+    )
+    max_words_per_factor: int = Field(
+        default=10,
+        ge=3,
+        le=30,
+        env="MAX_WORDS_PER_FACTOR",
+        description="Макс. слов в одной формулировке фактора или последствия",
+    )
 
     model_config = {
         "env_file": ".env",
