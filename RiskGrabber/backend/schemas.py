@@ -129,6 +129,8 @@ class DashboardResponse(BaseModel):
     negative_reviews_without_risk: int = 0
     negative_reviews_with_risk: int = 0
     bank_scores: Optional[List["BankScoreItem"]] = None
+    risks_reviews_count_min: Optional[int] = None
+    risks_reviews_count_max: Optional[int] = None
 
 
 # --- Analytics ---
@@ -200,6 +202,7 @@ class BankScoreItem(BaseModel):
     risk_score: float  # объединённая метрика: байес × √объём, нормализована в 1–5
     risks_count: int
     total_reviews: int
+    negative_reviews: int = 0  # количество негативных отзывов за период
     avg_severity: Optional[float] = None  # средняя серьёзность (w/n_risk), 1–5
 
 

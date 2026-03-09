@@ -13,6 +13,7 @@ from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, END, START
 
 from ..backend.config import get_settings
+from .utils import safe_prompt_str
 from .embeddings import (
     get_embedder,
     format_risk_for_embed,
@@ -315,12 +316,13 @@ graph = workflow.compile()
 
 def _review_text_for_risk_search(review: models.Review) -> str:
     """Текст отзыва для эмбеддинга с промптом поиска рисков (тот же формат, что при сохранении)."""
-    bank_name = (review.bank.name if review.bank else "Неизвестный банк").strip()
-    theme = (review.title or "без темы").strip() or "без темы"
+    bank_name = safe_prompt_str(review.bank.name if review.bank else None)
+    theme = safe_prompt_str(review.title)
+    body = safe_prompt_str(review.text)
     rating_part = ""
     if review.rating is not None and 1 <= review.rating <= 5:
         rating_part = f"Отзыв клиента (оценка 1–5): {int(review.rating)}. "
-    return f"Отзыв о банке {bank_name}. {rating_part}Тема {theme}. {(review.text or '').strip()}"
+    return f"Отзыв о банке {bank_name}. {rating_part}Тема {theme}. {body}"
 
 
 async def select_top_existing_risks_for_review(

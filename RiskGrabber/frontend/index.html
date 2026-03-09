@@ -741,7 +741,7 @@
             <button id="generateEmbeddingsBtn" class="btn btn-embedding"><span>🧠 Сгенерировать эмбеддинги</span></button>
             <button id="generateRisksBtn" class="btn btn-secondary"><span>⚡ Сгенерировать риски</span></button>
           </div>
-          <p style="font-size: 12px; color: #666; margin-top: 6px;">При включённом Auto новые необработанные отзывы автоматически проходят этап эмбеддингов, затем генерацию рисков. Кнопки при этом неактивны.</p>
+          <p style="font-size: 12px; color: #666; margin-top: 6px;">При включённом Auto сначала доделываются все отзывы без эмбеддингов, затем запускается генерация рисков. Кнопки при этом неактивны.</p>
         </div>
       </div>
       <div class="card sentiment-card">
@@ -772,8 +772,12 @@
           <input type="date" id="risksDateFrom" title="Начало периода" style="padding: 10px 14px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 14px;" />
           <span style="color: #666; padding: 0 4px;">—</span>
           <input type="date" id="risksDateTo" title="Конец периода" style="padding: 10px 14px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 14px;" />
+          <label style="margin-left: 8px;">Отзывов у риска:</label>
+          <input type="number" id="risksMinReviews" min="0" placeholder="мин" title="Минимум отзывов у риска" style="padding: 10px 14px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 14px; width: 72px;" />
+          <span style="color: #666; padding: 0 4px;">—</span>
+          <input type="number" id="risksMaxReviews" min="0" placeholder="макс" title="Максимум отзывов у риска" style="padding: 10px 14px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 14px; width: 72px;" />
         </div>
-        <p style="font-size: 12px; color: #666; margin-top: 6px;">Период задаёт диапазон дат отзывов для всех графиков и для списка рисков на странице.</p>
+        <p style="font-size: 12px; color: #666; margin-top: 6px;">Период задаёт диапазон дат отзывов для всех графиков и для списка рисков. «Отзывов у риска» — фильтр по количеству отзывов, привязанных к риску.</p>
       </div>
       <p id="risksUniqueCount" style="font-size: 14px; font-weight: 600; color: #333; margin-bottom: 10px;"></p>
       <div style="max-height: 500px; overflow-y: auto;">
@@ -783,17 +787,14 @@
 
     <div class="card" style="margin-bottom: 24px;">
       <h3>🗺️ Векторы отзывов (UMAP 2D)</h3>
-      <div class="checkbox-group" style="margin-bottom: 16px;">
-        <div class="checkbox-item">
-          <input type="checkbox" id="sentimentPositive" checked />
-          <label for="sentimentPositive" style="color: #4caf50;">✅ Позитивные</label>
-        </div>
-        <div class="checkbox-item">
-          <input type="checkbox" id="sentimentNegative" checked />
-          <label for="sentimentNegative" style="color: #f44336;">❌ Негативные</label>
-        </div>
+      <p style="font-size: 13px; color: #555; margin: 0 0 8px 0;">Зелёные точки — позитивные отзывы, красные — негативные.</p>
+      <div class="control-group" style="margin-bottom: 12px; flex-wrap: wrap; gap: 12px; align-items: center;">
+        <p id="vectorMapCounts" style="font-size: 14px; color: #555; margin: 0;">Всего на карте: — (позитивных: —, негативных: —)</p>
+        <label class="checkbox-item" style="cursor: pointer; display: inline-flex; align-items: center; gap: 6px;">
+          <input type="checkbox" id="vectorMapMaxBtn" title="Показать на карте все отзывы (по умолчанию 500)" />
+          <span>Max (все отзывы)</span>
+        </label>
       </div>
-      <p id="vectorMapCounts" style="font-size: 14px; color: #555; margin: 0 0 12px 0;">Всего на карте: — (позитивных: —, негативных: —)</p>
       <div id="vectorMapEmptyWrap" class="chart-container" style="height: 500px; position: relative;">
         <div id="vectorMapEmptyMessage" style="display: none; position: absolute; inset: 0; flex-direction: column; gap: 12px; background: rgba(248,249,250,0.95); border-radius: 12px; padding: 24px; text-align: center; align-items: center; justify-content: center; flex-wrap: nowrap;">
           <span style="font-size: 48px;">🗺️</span>
@@ -1042,6 +1043,10 @@
       if (risksTo) params.set('date_to', risksTo);
       const bankId = (document.getElementById('risksBankFilter') || {}).value || '';
       if (bankId) params.set('bank_id', String(bankId).trim());
+      const minRev = (document.getElementById('risksMinReviews') || {}).value;
+      const maxRev = (document.getElementById('risksMaxReviews') || {}).value;
+      if (minRev !== undefined && minRev !== '' && !isNaN(parseInt(minRev, 10))) params.set('min_reviews_count', String(parseInt(minRev, 10)));
+      if (maxRev !== undefined && maxRev !== '' && !isNaN(parseInt(maxRev, 10))) params.set('max_reviews_count', String(parseInt(maxRev, 10)));
       return `/dashboard/data?${params.toString()}`;
     }
 
@@ -1141,7 +1146,8 @@
       }
       function esc(s) { if (s == null) return ''; var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
       const rows = scores.slice(0, 20).map(function(s, i) {
-        return '<tr><td style="padding:6px;">' + (i + 1) + '</td><td style="padding:6px; font-weight:600;">' + esc(s.bank_name || '') + '</td><td style="padding:6px;">' + Number(s.risk_score).toFixed(4) + '</td><td style="padding:6px;">' + (s.avg_severity != null ? Number(s.avg_severity).toFixed(4) : '—') + '</td><td style="padding:6px;">' + s.risks_count + '</td><td style="padding:6px;">' + s.total_reviews + '</td></tr>';
+        const negRev = (s.negative_reviews != null) ? s.negative_reviews : 0;
+        return '<tr><td style="padding:6px;">' + (i + 1) + '</td><td style="padding:6px; font-weight:600;">' + esc(s.bank_name || '') + '</td><td style="padding:6px;">' + Number(s.risk_score).toFixed(4) + '</td><td style="padding:6px;">' + (s.avg_severity != null ? Number(s.avg_severity).toFixed(4) : '—') + '</td><td style="padding:6px;">' + s.risks_count + '</td><td style="padding:6px;">' + negRev + '</td></tr>';
       }).join('');
       wrap.innerHTML = '<table style="width:100%; border-collapse: collapse; font-size: 12px;"><thead><tr><th>#</th><th>Банк</th><th>Агрегированный показатель рисков</th><th>Средняя серьёзность отзыва</th><th>Уникальных рисков</th><th>Негативных отзывов</th></tr></thead><tbody>' + rows + '</tbody></table>';
     }
@@ -1469,6 +1475,10 @@
       updateRisksListWithTypeFilter(Array.isArray(data.risks) ? data.risks : []);
       updateDateRangePlaque(data.reviews_date_min ?? null, data.reviews_date_max ?? null);
       setDefaultPeriodDates(data.reviews_date_min ?? null, data.reviews_date_max ?? null);
+      var minRevEl = document.getElementById('risksMinReviews');
+      var maxRevEl = document.getElementById('risksMaxReviews');
+      if (minRevEl != null && data.risks_reviews_count_min != null) minRevEl.value = String(data.risks_reviews_count_min);
+      if (maxRevEl != null && data.risks_reviews_count_max != null) maxRevEl.value = String(data.risks_reviews_count_max);
 
       window._dashboardUpdatingFilter = true;
       try {
@@ -1687,6 +1697,8 @@
       vectorMapLoadInProgress = true;
       try {
         const params = buildAnalyticsParams();
+        const maxAll = (document.getElementById('vectorMapMaxBtn') || {}).checked === true;
+        params.set('limit', maxAll ? '50000' : '500');
         const resp = await fetch(`/vectors/map?${params.toString()}`);
         const data = await resp.json().catch(() => ({}));
         const rawPoints = Array.isArray(data.points) ? data.points : [];
@@ -1710,18 +1722,8 @@
         const countsEl = document.getElementById('vectorMapCounts');
         if (countsEl) countsEl.textContent = 'Всего на карте: ' + rawPoints.length + ' (позитивных: ' + nPos + ', негативных: ' + nNeg + ')';
 
-        const showPositive = document.getElementById('sentimentPositive').checked;
-        const showNegative = document.getElementById('sentimentNegative').checked;
-
         const points = rawPoints
           .filter(p => p != null && typeof p === 'object' && typeof p.x === 'number' && typeof p.y === 'number')
-          .filter(p => {
-            const s = p.sentiment;
-            if (s === 'positive' && !showPositive) return false;
-            if (s === 'negative' && !showNegative) return false;
-            if (s === 'neutral') return false;
-            return true;
-          })
           .map(p => ({
             x: p.x,
             y: p.y,
@@ -1831,9 +1833,10 @@
       }
     }
 
-    // Обработчики для чекбоксов сентимента
-    document.getElementById('sentimentPositive').addEventListener('change', loadVectorMap);
-    document.getElementById('sentimentNegative').addEventListener('change', loadVectorMap);
+    var vectorMapMaxBtn = document.getElementById('vectorMapMaxBtn');
+    if (vectorMapMaxBtn) {
+      vectorMapMaxBtn.addEventListener('change', function() { loadVectorMap(); });
+    }
 
     // Функция для показа деталей отзыва
     async function showReviewDetails(reviewId) {
@@ -2045,20 +2048,29 @@
 
     async function runOneAutoCycle() {
       try {
-        setStatus('Auto: эмбеддинги...', true);
-        const emb = await consumeStream('/stream/embeddings/generate', {
-          onProgress: (d) => {
-            if (d && (d.total_so_far ?? 0) > 0) {
-              loadDashboardData(true);
-              loadVectorMap();
+        let totalEmbedded = 0;
+        let embedded = 0;
+        do {
+          setStatus(totalEmbedded > 0
+            ? `Auto: эмбеддинги... (уже обработано ${totalEmbedded})`
+            : 'Auto: эмбеддинги...', true);
+          const emb = await consumeStream('/stream/embeddings/generate', {
+            onProgress: (d) => {
+              if (d && (d.total_so_far ?? 0) > 0) {
+                loadDashboardData(true);
+              }
             }
+          });
+          embedded = emb.embedded_reviews || 0;
+          totalEmbedded += embedded;
+          if (embedded > 0) {
+            await loadDashboardData(true);
+            await loadVectorMap();
           }
-        });
-        const embedded = emb.embedded_reviews || 0;
-        if (embedded > 0) {
-          await loadDashboardData(true);
-          await loadVectorMap();
-          setStatus(`Auto: эмбеддинги готовы (${embedded}). Запуск генерации рисков...`, true);
+        } while (embedded > 0);
+
+        if (totalEmbedded > 0) {
+          setStatus(`Auto: эмбеддинги готовы (${totalEmbedded}). Запуск генерации рисков...`, true);
         }
         const riskData = await consumeStream('/stream/risks/generate', {
           onProgress: (d) => {
@@ -2068,8 +2080,8 @@
         const totalRisks = riskData.risks_created || 0;
         const totalProcessed = riskData.reviews_processed || 0;
         if (totalProcessed > 0) await loadRisksBlockOnly();
-        setStatus(embedded > 0 || totalRisks > 0
-          ? `Auto: готово. Эмбеддинги: ${embedded}, рисков создано: ${totalRisks}.`
+        setStatus(totalEmbedded > 0 || totalRisks > 0
+          ? `Auto: готово. Эмбеддинги: ${totalEmbedded}, рисков создано: ${totalRisks}.`
           : 'Auto: необработанных отзывов нет. Следующая проверка через 60 с.', true);
       } catch (e) {
         console.error(e);
@@ -2119,7 +2131,6 @@
           onProgress: (d) => {
             if (d && (d.total_so_far ?? 0) > 0) {
               loadDashboardData(true);
-              loadVectorMap();
             }
           }
         });
@@ -2211,6 +2222,10 @@
     document.getElementById('risksDateTo').addEventListener('change', function() {
       schedulePeriodRefresh();
     });
+    var risksMinRevEl = document.getElementById('risksMinReviews');
+    if (risksMinRevEl) risksMinRevEl.addEventListener('change', scheduleRisksFilterRefresh);
+    var risksMaxRevEl = document.getElementById('risksMaxReviews');
+    if (risksMaxRevEl) risksMaxRevEl.addEventListener('change', scheduleRisksFilterRefresh);
 
     (function init() {
       setStatus('Загрузка дашборда…', true);

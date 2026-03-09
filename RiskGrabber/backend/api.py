@@ -175,10 +175,10 @@ async def vectors_map(
     date_from: Optional[str] = Query(None, description="Начало периода по дате отзыва (YYYY-MM-DD)"),
     date_to: Optional[str] = Query(None, description="Конец периода по дате отзыва (YYYY-MM-DD)"),
     limit: int = Query(
-        default=50000,
+        default=500,
         ge=10,
         le=100000,
-        description="Максимальное количество отзывов для визуализации (по умолчанию — все)",
+        description="Максимальное количество отзывов для визуализации (по умолчанию 500, для всех — передать большой лимит)",
     ),
     db: AsyncSession = Depends(get_db),
 ) -> schemas.VectorMapResponse:
@@ -1258,6 +1258,8 @@ def dashboard_data(
     bank_id: Optional[str] = Query(None, description="Фильтр рисков по банку (ID)"),
     date_from: Optional[str] = Query(None, description="Начало периода по дате отзыва (YYYY-MM-DD)"),
     date_to: Optional[str] = Query(None, description="Конец периода по дате отзыва (YYYY-MM-DD)"),
+    min_reviews_count: Optional[int] = Query(None, ge=0, description="Минимум отзывов у риска (актуальные риски)"),
+    max_reviews_count: Optional[int] = Query(None, ge=0, description="Максимум отзывов у риска (актуальные риски)"),
     db: Session = Depends(get_db_sync),
 ) -> schemas.DashboardResponse:
     """
@@ -1378,6 +1380,7 @@ def dashboard_data(
                 risk_score=risk_score_val,
                 risks_count=risk_count_by_bank.get(bank.id, 0),
                 total_reviews=total_reviews,
+                negative_reviews=negative_reviews,
                 avg_severity=avg_sev if risks_count else None,
             )
         )
@@ -1478,6 +1481,8 @@ def dashboard_data(
     if bank_id_int is not None:
         rr_subq = rr_subq.filter(models.ReviewRisk.bank_id == bank_id_int)
     rr_ids = [r.id for r in rr_subq.all()]
+    risks_reviews_count_min: Optional[int] = None
+    risks_reviews_count_max: Optional[int] = None
     if not rr_ids:
         risks = []
     else:
@@ -1510,6 +1515,12 @@ def dashboard_data(
                     reviews_count=len(items),
                 )
             )
+        risks_reviews_count_min = min((r.reviews_count for r in risks), default=None)
+        risks_reviews_count_max = max((r.reviews_count for r in risks), default=None)
+        if min_reviews_count is not None:
+            risks = [r for r in risks if r.reviews_count >= min_reviews_count]
+        if max_reviews_count is not None:
+            risks = [r for r in risks if r.reviews_count <= max_reviews_count]
         risks.sort(key=lambda r: r.created_at, reverse=True)
 
     # Общая статистика (всего по БД)
@@ -1559,6 +1570,8 @@ def dashboard_data(
         negative_reviews_without_risk=int(negative_reviews_without_risk),
         negative_reviews_with_risk=int(negative_reviews_with_risk),
         bank_scores=bank_scores_list,
+        risks_reviews_count_min=risks_reviews_count_min,
+        risks_reviews_count_max=risks_reviews_count_max,
     )
 
 

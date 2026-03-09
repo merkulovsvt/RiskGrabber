@@ -3,9 +3,14 @@ from pathlib import Path
 from typing import Iterable, List, Optional
 
 import numpy as np
+import torch
 from sentence_transformers import SentenceTransformer
 
 from ..backend.config import get_settings
+
+
+def _embed_device() -> str:
+    return "cuda" if torch.cuda.is_available() else "cpu"
 
 _RISKGRABBER_ROOT = Path(__file__).resolve().parent.parent
 _PROJECT_ROOT = _RISKGRABBER_ROOT.parent
@@ -43,10 +48,12 @@ _embedder: Optional["LocalHFEmbedder"] = None
 
 class LocalHFEmbedder:
     def __init__(self, model_name: str) -> None:
+        device = _embed_device()
+        logger.info("Embedder device: %s", device)
         self.model = SentenceTransformer(
             model_name,
             tokenizer_kwargs={"padding_side": "left", 'attn_implementation': 'sdpa'},
-            device="cuda",
+            device=device,
             trust_remote_code=True,
         )
 
@@ -57,6 +64,7 @@ class LocalHFEmbedder:
         prompt: Optional[str] = None,
         prompt_name: Optional[str] = None,
     ) -> List[List[float]]:
+        texts_list = list(texts)
         kwargs = dict(
             normalize_embeddings=True,
             convert_to_numpy=True,
@@ -66,8 +74,23 @@ class LocalHFEmbedder:
             kwargs["prompt"] = prompt
         if prompt_name is not None:
             kwargs["prompt_name"] = prompt_name
-        vectors = self.model.encode(list(texts), **kwargs)
-        return [vec.astype(float).tolist() for vec in np.atleast_2d(vectors)]
+        try:
+            vectors = self.model.encode(texts_list, **kwargs)
+            return [vec.astype(float).tolist() for vec in np.atleast_2d(vectors)]
+        except Exception as e:
+            if len(texts_list) <= 1:
+                raise
+            logger.warning(
+                "Batch embed failed (n=%d), falling back to per-item encode: %s",
+                len(texts_list),
+                e,
+            )
+            result: List[List[float]] = []
+            for t in texts_list:
+                vec = self.model.encode([t], **kwargs)
+                row = np.atleast_2d(vec)[0]
+                result.append(row.astype(float).tolist())
+            return result
 
 
 def _ensure_local_model() -> str:
@@ -78,7 +101,7 @@ def _ensure_local_model() -> str:
     model = SentenceTransformer(
         _HF_MODEL_ID,
         tokenizer_kwargs={"padding_side": "left", 'attn_implementation': 'sdpa'},
-        device="cuda",
+        device=_embed_device(),
         trust_remote_code=True,
     )
     model.save(str(_DEFAULT_LOCAL_MODEL_DIR))

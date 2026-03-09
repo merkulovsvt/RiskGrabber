@@ -12,6 +12,7 @@ from ..backend.config import get_settings
 from ..backend import models
 from .embeddings import get_embedder, INSTRUCT_BANK_REVIEW_PROMPT
 from .sentiment import get_sentiment_classifier
+from .utils import safe_prompt_str
 
 logger = logging.getLogger(__name__)
 
@@ -252,7 +253,10 @@ def sync_all_reviews_to_qdrant(db: Session, incremental: bool = True) -> int:
             break
         texts = []
         for r in reviews:
-            texts.append(f"Отзыв о банке {r.bank.name.strip()}. Отзыв клиента (оценка 1–5): {r.rating}. Тема {r.title.strip()}. {r.text.strip()}")
+            bank_name = safe_prompt_str(r.bank.name if r.bank else None)
+            theme = safe_prompt_str(r.title)
+            body = safe_prompt_str(r.text)
+            texts.append(f"Отзыв о банке {bank_name}. Отзыв клиента (оценка 1–5): {r.rating}. Тема {theme}. {body}")
         vectors = embedder.embed(texts, prompt=INSTRUCT_BANK_REVIEW_PROMPT)
 
         for r, vec in zip(reviews, vectors):
@@ -288,7 +292,10 @@ async def sync_all_reviews_to_qdrant_async(db: AsyncSession, incremental: bool =
             break
         texts = []
         for r in reviews:
-            texts.append(f"Отзыв о банке {r.bank.name.strip()}. Отзыв клиента (оценка 1–5): {r.rating}. Тема {r.title.strip()}. {r.text.strip()}")    
+            bank_name = safe_prompt_str(r.bank.name if r.bank else None)
+            theme = safe_prompt_str(r.title)
+            body = safe_prompt_str(r.text)
+            texts.append(f"Отзыв о банке {bank_name}. Отзыв клиента (оценка 1–5): {r.rating}. Тема {theme}. {body}")
         vectors = await asyncio.to_thread(
             lambda: embedder.embed(texts, prompt=INSTRUCT_BANK_REVIEW_PROMPT)
         )

@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session, selectinload
 
 from .embeddings import get_embedder, INSTRUCT_BANK_REVIEW_PROMPT
+from .utils import safe_prompt_str
 from .sentiment import get_sentiment_classifier
 from .vector_store import upsert_review_vectors_async
 from ..backend import models
@@ -61,7 +62,10 @@ async def embed_new_reviews_async(
 
         texts = []
         for r in reviews:
-            texts.append(f"Отзыв о банке {r.bank.name.strip()}. Отзыв клиента (оценка 1–5): {r.rating}. Тема {r.title.strip()}. {r.text.strip()}")
+            bank_name = safe_prompt_str(r.bank.name if r.bank else None)
+            theme = safe_prompt_str(r.title)
+            body = safe_prompt_str(r.text)
+            texts.append(f"Отзыв о банке {bank_name}. Отзыв клиента (оценка 1–5): {r.rating}. Тема {theme}. {body}")
 
         vectors = await asyncio.to_thread(
             lambda: embedder.embed(texts, prompt=INSTRUCT_BANK_REVIEW_PROMPT)
